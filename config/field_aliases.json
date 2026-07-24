@@ -1,0 +1,71 @@
+{
+  "_说明": "字段别名配置 - 所有读取字段都支持别名匹配",
+  "业务报告表头关键词": [
+    "business report",
+    "business_report",
+    "业务报告",
+    "sales and traffic",
+    "detail page sales",
+    "detail_page_sales"
+  ],
+  "广告报告表头关键词": [
+    "campaign report",
+    "campaign_report",
+    "广告活动报告",
+    "campaigns",
+    "sponsored products",
+    "campaign",
+    "推广的商品",
+    "推广商品",
+    "advertised product",
+    "advertised_products",
+    "advertised-product",
+    "sponsored products advertised product",
+    "sp advertised product"
+  ],
+  "产品对照表表头关键词": [
+    "all listings report",
+    "all_listings",
+    "listing report",
+    "商品报告",
+    "所有商品报告",
+    "active listings"
+  ],
+  "业务报告字段": {
+    "ASIN": ["ASIN", "asin", "Child ASIN", "（子）ASIN", "子ASIN", "Parent ASIN", "父ASIN"],
+    "Sessions": ["Sessions", "sessions", "会话数", "会话数-总计", "会话数 - 总计", "访客数", "Session"],
+    "Page Views": ["Page Views", "page_views", "页面浏览量", "页面浏览次数", "浏览量"],
+    "Units Ordered": ["Units Ordered", "units_ordered", "已订购商品数量", "订单量", "订单数量"],
+    "Ordered Product Sales": ["Ordered Product Sales", "ordered_product_sales", "已订购商品销售额", "销售额", "商品销售额"],
+    "Total Order Items": ["Total Order Items", "total_order_items", "订单商品数", "订单件数"],
+    "Date": ["Date", "date", "日期", "Report Date", "Day"]
+  },
+  "广告报告字段": {
+    "Campaign": ["Campaign", "campaign", "Campaign Name", "广告活动名称", "广告活动", "campaign name"],
+    "Ad Group": ["Ad Group", "ad_group", "广告组", "广告组名称", "Ad Group Name"],
+    "ASIN": ["ASIN", "asin", "Advertised ASIN", "推广的ASIN", "广告ASIN", "Advertised Asin"],
+    "SKU": ["SKU", "sku", "Seller SKU", "卖家SKU", "商家SKU", "广告SKU", "Advertised SKU", "推广的SKU", "已推广的SKU"],
+    "Impressions": ["Impressions", "impressions", "曝光", "展示量", "曝光量", "Impression"],
+    "Clicks": ["Clicks", "clicks", "点击", "点击量", "Click"],
+    "Spend": ["Spend", "spend", "花费", "广告花费", "Cost", "cost"],
+    "Orders": ["Orders", "orders", "订单", "订单数量", "购买次数", "7 Day Total Orders", "7 Day Total Orders (#)", "7天总订单数(#)", "7天总订单数"],
+    "Sales": ["Sales", "sales", "销售额", "广告销售额", "7 Day Total Sales", "7 Day Total Sales ($)", "7天总销售额"],
+    "ACOS": ["ACOS", "acos", "广告成本销售比", "广告投入产出比 (ACOS) 总计", "广告投入产出比", "ACOS总计"],
+    "CTR": ["CTR", "ctr", "点击率", "点击率 (CTR)"],
+    "CPC": ["CPC", "cpc", "单次点击成本", "单次点击成本 (CPC)"],
+    "Date": ["Date", "date", "日期", "Start Date", "End Date", "Report Date", "Day", "Day Date"],
+    "ROAS": ["ROAS", "roas", "广告投资回报率", "总广告投资回报率 (ROAS)", "总广告投资回报率"],
+    "CVR": ["CVR", "cvr", "转化率", "7天的转化率"]
+  },
+  "产品对照表字段": {
+    "seller-sku": ["seller-sku", "seller_sku", "SKU", "sku", "卖家SKU", "商家SKU"],
+    "asin1": ["asin1", "asin", "ASIN"],
+    "item-name": ["item-name", "item_name", "title", "Title", "产品名称", "商品名称", "商品标题"],
+    "price": ["price", "Price", "售价", "价格", "商品价格", "selling-price"],
+    "quantity": ["quantity", "Quantity", "库存", "数量", "库存数量"],
+    "fulfillment-channel": ["fulfillment-channel", "fulfillment_channel", "配送方式", "发货渠道", "fulfillment channel"],
+    "status": ["status", "Status", "状态", "商品状态", "是否在售"],
+    "product-id": ["product-id", "product_id", "Product ID", "商品编码"],
+    "open-date": ["open-date", "open_date", "Open Date", "开放日期"]
+  }
+}
