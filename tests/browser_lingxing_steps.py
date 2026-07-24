@@ -61,6 +61,10 @@ def _configure(page: Page) -> None:
 
 def _disconnect(page: Page) -> None:
     _configure(page)
+    page.locator("#show-config").click()
+    expect(page.locator("#config-panel")).to_have_attribute("open", "")
+    expect(page.locator("#disconnect")).to_be_visible()
+    expect(page.locator("#disconnect")).to_be_enabled()
     page.evaluate("window.confirm = () => true")
     page.locator("#disconnect").click()
     expect(page.locator("#message")).to_contain_text("已断开", timeout=10_000)
