@@ -29,10 +29,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install Agent and browser dependencies
+      - name: Install browser acceptance dependencies
         run: >-
           python -m pip install --disable-pip-version-check
-          -r requirements-agent.txt
+          -r requirements.txt
+          fastapi uvicorn python-multipart httpx
           playwright==1.55.0
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
