@@ -9,11 +9,10 @@ from src.data_merger import (
     check_duplicate_rows,
     find_ad_only_rows,
     find_biz_only_rows,
-    generate_full_sku_date_grid,
     merge_business_and_ad,
     merge_inventory_to_daily,
-    merge_onto_full_grid,
 )
+from src.full_grid import generate_full_sku_date_grid, merge_onto_full_grid
 
 
 def business_row(store: str, marketplace: str, sku: str, asin: str, sales: float) -> dict:
@@ -126,6 +125,94 @@ def test_grid_merge_fills_missing_metrics_with_zero() -> None:
 
     assert len(result) == 2
     assert sorted(result["销售额"]) == [0.0, 20.0]
+
+
+def test_full_grid_uniquely_falls_back_between_msku_and_seller_sku() -> None:
+    mapping = pd.DataFrame(
+        [{
+            "shop_id": "STORE-A",
+            "marketplace": "US",
+            "SKU": "SKU-1",
+            "msku": "SKU-1",
+            "seller_sku": "",
+            "ASIN": "B000TEST1",
+            "产品名称": "Mapped Product",
+        }]
+    )
+    business = pd.DataFrame(
+        [{
+            "shop_id": "STORE-A",
+            "marketplace": "US",
+            "日期": "2026-07-24",
+            "report_date": "2026-07-24",
+            "SKU": "SKU-1",
+            "msku": "",
+            "seller_sku": "SKU-1",
+            "ASIN": "B000TEST1",
+            "Sessions": 10,
+            "PV": 12,
+            "总订单": 2,
+            "销售额": 20,
+            "业务CVR": 0.2,
+        }]
+    )
+
+    grid, _ = generate_full_sku_date_grid(mapping, business, None)
+    result = merge_onto_full_grid(grid, business, pd.DataFrame(), mapping)
+
+    assert len(result) == 1
+    assert result.loc[0, "销售额"] == 20
+    assert result.loc[0, "产品名称"] == "Mapped Product"
+    assert result.loc[0, "key_source"] == "seller_sku"
+
+
+def test_full_grid_does_not_use_ambiguous_legacy_fallback() -> None:
+    mapping = pd.DataFrame(
+        [
+            {
+                "shop_id": "STORE-A",
+                "marketplace": "US",
+                "SKU": "SKU-1",
+                "msku": "SKU-1",
+                "seller_sku": "",
+                "ASIN": "B000TEST1",
+                "产品名称": "MSKU Product",
+            },
+            {
+                "shop_id": "STORE-A",
+                "marketplace": "US",
+                "SKU": "SKU-1",
+                "msku": "",
+                "seller_sku": "SKU-1",
+                "ASIN": "B000TEST2",
+                "产品名称": "Seller Product",
+            },
+        ]
+    )
+    business = pd.DataFrame(
+        [{
+            "shop_id": "STORE-A",
+            "marketplace": "US",
+            "日期": "2026-07-24",
+            "report_date": "2026-07-24",
+            "SKU": "SKU-1",
+            "msku": "",
+            "seller_sku": "SKU-1",
+            "ASIN": "B000TEST2",
+            "Sessions": 10,
+            "PV": 12,
+            "总订单": 2,
+            "销售额": 20,
+            "业务CVR": 0.2,
+        }]
+    )
+
+    grid, _ = generate_full_sku_date_grid(mapping, business, None)
+    result = merge_onto_full_grid(grid, business, pd.DataFrame(), mapping)
+    by_name = result.set_index("产品名称")
+
+    assert by_name.loc["MSKU Product", "销售额"] == 0
+    assert by_name.loc["Seller Product", "销售额"] == 20
 
 
 def test_quality_helpers_identify_one_sided_and_duplicate_rows() -> None:
