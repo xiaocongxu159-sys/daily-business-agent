@@ -19,6 +19,20 @@ INVENTORY_METRICS = [
 ]
 
 
+def _series(dataframe: pd.DataFrame, column: str, default=0.0) -> pd.Series:
+    if column in dataframe.columns:
+        return dataframe[column]
+    return pd.Series(default, index=dataframe.index)
+
+
+def _numeric(dataframe: pd.DataFrame, column: str, default=0.0) -> pd.Series:
+    return pd.to_numeric(_series(dataframe, column, default), errors="coerce").fillna(default)
+
+
+def _text(dataframe: pd.DataFrame, column: str, default="") -> pd.Series:
+    return _series(dataframe, column, default).fillna(default).astype(str)
+
+
 def _clean_sku_key(value) -> str:
     if value is None or pd.isna(value):
         return ""
@@ -29,7 +43,7 @@ def _clean_sku_key(value) -> str:
 
 def apply_asin_to_sku_mapping(dataframe, asin_to_sku_dict):
     result = dataframe.copy()
-    result["ASIN"] = result.get("ASIN", "").astype(str).str.strip()
+    result["ASIN"] = _text(result, "ASIN").str.strip()
     result["SKU"] = result["ASIN"].map(asin_to_sku_dict or {}).fillna("")
     return result
 
@@ -77,8 +91,13 @@ def _normalize_ad_agg_cols(dataframe):
 def _ensure_sku(dataframe: pd.DataFrame) -> pd.DataFrame:
     result = dataframe.copy()
     if "SKU" not in result.columns:
-        result["SKU"] = result.get("msku", result.get("seller_sku", ""))
-    result["SKU"] = result["SKU"].astype(str).str.strip()
+        if "msku" in result.columns:
+            result["SKU"] = result["msku"]
+        elif "seller_sku" in result.columns:
+            result["SKU"] = result["seller_sku"]
+        else:
+            result["SKU"] = ""
+    result["SKU"] = result["SKU"].fillna("").astype(str).str.strip()
     if "seller_sku" not in result.columns:
         result["seller_sku"] = result["SKU"]
     return result
@@ -86,9 +105,13 @@ def _ensure_sku(dataframe: pd.DataFrame) -> pd.DataFrame:
 
 def _row_merge_key(dataframe: pd.DataFrame) -> pd.Series:
     frame = standardize_identity_fields(_ensure_sku(dataframe), log_default=False)
-    date = frame.get("日期", frame.get("report_date", "")).astype(str).str.strip()
-    sku = frame.get("SKU", frame.get("offer_identity", "")).map(_clean_sku_key)
-    scoped = frame.get("daily_offer_key", pd.Series(pd.NA, index=frame.index, dtype="object"))
+    date = (
+        _text(frame, "日期").str.strip()
+        if "日期" in frame.columns
+        else _text(frame, "report_date").str.strip()
+    )
+    sku = _text(frame, "SKU").map(_clean_sku_key)
+    scoped = _series(frame, "daily_offer_key", pd.NA)
     legacy = "legacy|" + date + "|" + sku
     return scoped.where(scoped.notna(), legacy)
 
@@ -101,7 +124,7 @@ def aggregate_business_by_sku(business_df):
     if frame.empty:
         return pd.DataFrame()
     for column in BUSINESS_METRICS:
-        frame[column] = pd.to_numeric(frame.get(column, 0), errors="coerce").fillna(0.0)
+        frame[column] = _numeric(frame, column)
     for column in INVENTORY_METRICS:
         if column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
@@ -130,9 +153,12 @@ def aggregate_business_by_sku(business_df):
 def _coalesce(result: pd.DataFrame, column: str) -> None:
     left, right = f"{column}_biz", f"{column}_ad"
     if left in result.columns or right in result.columns:
-        left_values = result[left] if left in result.columns else pd.Series(pd.NA, index=result.index)
-        right_values = result[right] if right in result.columns else pd.Series(pd.NA, index=result.index)
-        result[column] = left_values.where(left_values.notna() & left_values.astype(str).ne(""), right_values)
+        left_values = _series(result, left, pd.NA)
+        right_values = _series(result, right, pd.NA)
+        result[column] = left_values.where(
+            left_values.notna() & left_values.astype(str).ne(""),
+            right_values,
+        )
         result.drop(columns=[left, right], inplace=True, errors="ignore")
 
 
@@ -140,7 +166,13 @@ def _mapping_info(mapping_df: pd.DataFrame | None) -> tuple[dict, dict]:
     if mapping_df is None or mapping_df.empty:
         return {}, {}
     mapping = standardize_identity_fields(_ensure_sku(mapping_df), log_default=False)
-    info_columns = [column for column in ["产品名称", "售价", "尺寸/规格", "库存", "配送方式", "是否在售", "ASIN", "parent_asin"] if column in mapping.columns]
+    info_columns = [
+        column
+        for column in [
+            "产品名称", "售价", "尺寸/规格", "库存", "配送方式", "是否在售", "ASIN", "parent_asin",
+        ]
+        if column in mapping.columns
+    ]
     scoped, global_unique = {}, {}
     for offer_key, group in mapping[mapping["offer_key"].notna()].groupby("offer_key"):
         if len(group) == 1:
@@ -157,14 +189,16 @@ def _backfill_product_info(dataframe: pd.DataFrame, mapping_df: pd.DataFrame | N
     fields = ["产品名称", "售价", "尺寸/规格", "库存", "配送方式", "是否在售"]
     matched = []
     for index, row in result.iterrows():
-        info = scoped.get(row.get("offer_key")) or global_unique.get(_clean_sku_key(row.get("SKU")))
+        info = scoped.get(row.get("offer_key")) or global_unique.get(
+            _clean_sku_key(row.get("SKU"))
+        )
         matched.append(bool(info))
         if not info:
             continue
         for field in fields:
-            current = row.get(field, "")
             if field not in result.columns:
                 result[field] = ""
+            current = result.at[index, field]
             if current is None or pd.isna(current) or str(current).strip() == "":
                 result.at[index, field] = info.get(field, "")
     result["product_info_match_status"] = np.where(matched, "matched", "unmatched")
@@ -203,13 +237,15 @@ def merge_business_and_ad(business_agg, ad_agg, mapping_df=None):
             _coalesce(result, column)
 
     for column in ["Sessions", "PV", "总订单", "销售额", "业务CVR"]:
-        result[column] = pd.to_numeric(result.get(column, 0), errors="coerce").fillna(0.0)
+        result[column] = _numeric(result, column)
     for column in [
         "广告曝光", "广告点击", "广告花费", "广告订单", "广告销售额",
         "ACoS", "CTR", "CPC", "广告CVR", "ROAS",
     ]:
-        result[column] = pd.to_numeric(result.get(column, 0), errors="coerce").fillna(0.0)
-    result["TACoS"] = np.where(result["销售额"].gt(0), result["广告花费"] / result["销售额"], 0.0)
+        result[column] = _numeric(result, column)
+    result["TACoS"] = np.where(
+        result["销售额"].gt(0), result["广告花费"] / result["销售额"], 0.0
+    )
     result["总销售额含广告"] = result["销售额"]
     result["总订单含广告"] = result["总订单"]
     result = _backfill_product_info(result, mapping_df)
@@ -221,7 +257,11 @@ def generate_full_sku_date_grid(mapping_df, business_raw, ad_raw, date_range=Non
     dates = set()
     for frame in [business_raw, ad_raw]:
         if frame is not None and not frame.empty:
-            source = frame.get("日期", frame.get("report_date", pd.Series(dtype=object)))
+            source = (
+                frame["日期"]
+                if "日期" in frame.columns
+                else _series(frame, "report_date", "")
+            )
             dates.update(str(value) for value in source.dropna() if str(value).strip())
     if date_range:
         start, end = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
@@ -275,7 +315,7 @@ def merge_onto_full_grid(full_grid, business_agg, ad_agg, mapping_df=None, inven
         "Sessions", "PV", "总订单", "销售额", "业务CVR", "广告曝光", "广告点击",
         "广告花费", "广告订单", "广告销售额", "ACoS", "CTR", "CPC", "广告CVR", "ROAS", "TACoS",
     ]:
-        result[column] = pd.to_numeric(result.get(column, 0), errors="coerce").fillna(0.0)
+        result[column] = _numeric(result, column)
     result = result.drop(columns=["_merge_key"], errors="ignore")
     if inventory_agg is not None:
         result, _ = merge_inventory_to_daily(result, inventory_agg, None)
@@ -283,8 +323,16 @@ def merge_onto_full_grid(full_grid, business_agg, ad_agg, mapping_df=None, inven
 
 
 def _activity_masks(dataframe: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
-    business = dataframe.get("Sessions", 0).fillna(0).gt(0) | dataframe.get("销售额", 0).fillna(0).gt(0) | dataframe.get("总订单", 0).fillna(0).gt(0)
-    advertising = dataframe.get("广告曝光", 0).fillna(0).gt(0) | dataframe.get("广告花费", 0).fillna(0).gt(0) | dataframe.get("广告销售额", 0).fillna(0).gt(0)
+    business = (
+        _numeric(dataframe, "Sessions").gt(0)
+        | _numeric(dataframe, "销售额").gt(0)
+        | _numeric(dataframe, "总订单").gt(0)
+    )
+    advertising = (
+        _numeric(dataframe, "广告曝光").gt(0)
+        | _numeric(dataframe, "广告花费").gt(0)
+        | _numeric(dataframe, "广告销售额").gt(0)
+    )
     return business, advertising
 
 
@@ -305,16 +353,32 @@ def find_biz_only_rows(dataframe):
 def check_biz_order_no_sales(dataframe):
     if dataframe is None or dataframe.empty:
         return pd.DataFrame()
-    orders = pd.to_numeric(dataframe.get("总订单", dataframe.get("Units Ordered", 0)), errors="coerce").fillna(0)
-    sales = pd.to_numeric(dataframe.get("销售额", dataframe.get("Ordered Product Sales", 0)), errors="coerce").fillna(0)
+    orders = (
+        _numeric(dataframe, "总订单")
+        if "总订单" in dataframe.columns
+        else _numeric(dataframe, "Units Ordered")
+    )
+    sales = (
+        _numeric(dataframe, "销售额")
+        if "销售额" in dataframe.columns
+        else _numeric(dataframe, "Ordered Product Sales")
+    )
     return dataframe[orders.gt(0) & sales.le(0)].copy()
 
 
 def check_ad_order_no_sales(dataframe):
     if dataframe is None or dataframe.empty:
         return pd.DataFrame()
-    orders = pd.to_numeric(dataframe.get("广告订单", dataframe.get("Orders", 0)), errors="coerce").fillna(0)
-    sales = pd.to_numeric(dataframe.get("广告销售额", dataframe.get("Sales", 0)), errors="coerce").fillna(0)
+    orders = (
+        _numeric(dataframe, "广告订单")
+        if "广告订单" in dataframe.columns
+        else _numeric(dataframe, "Orders")
+    )
+    sales = (
+        _numeric(dataframe, "广告销售额")
+        if "广告销售额" in dataframe.columns
+        else _numeric(dataframe, "Sales")
+    )
     return dataframe[orders.gt(0) & sales.le(0)].copy()
 
 
@@ -332,15 +396,14 @@ def merge_inventory_to_daily(daily_sku, inventory_agg, inventory_detail=None):
     issues = []
     if inventory_agg is None or inventory_agg.empty:
         for column in INVENTORY_METRICS:
-            if column not in result.columns:
-                result[column] = 0.0
+            result[column] = _numeric(result, column)
         result["inventory_match_status"] = "source_not_available"
         result["inventory_source_present"] = False
         return result, issues
 
     inventory = standardize_identity_fields(_ensure_sku(inventory_agg), log_default=False)
     for column in INVENTORY_METRICS:
-        inventory[column] = pd.to_numeric(inventory.get(column, 0), errors="coerce").fillna(0.0)
+        inventory[column] = _numeric(inventory, column)
     offer_values = {}
     for offer_key, group in inventory[inventory["offer_key"].notna()].groupby("offer_key"):
         offer_values[offer_key] = group[INVENTORY_METRICS].sum().to_dict()
@@ -351,13 +414,16 @@ def merge_inventory_to_daily(daily_sku, inventory_agg, inventory_detail=None):
 
     statuses = []
     for index, row in result.iterrows():
-        values = offer_values.get(row.get("offer_key")) or legacy_values.get(_clean_sku_key(row.get("SKU")))
+        values = offer_values.get(row.get("offer_key")) or legacy_values.get(
+            _clean_sku_key(row.get("SKU"))
+        )
         if values is None:
             statuses.append("identity_unmatched")
             for column in INVENTORY_METRICS:
                 result.at[index, column] = 0.0
         else:
-            statuses.append("matched" if any(float(values.get(column, 0)) != 0 for column in INVENTORY_METRICS) else "zero_inventory")
+            nonzero = any(float(values.get(column, 0)) != 0 for column in INVENTORY_METRICS)
+            statuses.append("matched" if nonzero else "zero_inventory")
             for column in INVENTORY_METRICS:
                 result.at[index, column] = values.get(column, 0.0)
     result["inventory_match_status"] = statuses
