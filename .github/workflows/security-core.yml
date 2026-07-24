@@ -7,6 +7,7 @@ on:
       - "config/**"
       - "tests/**"
       - "docs/**"
+      - "requirements*.txt"
       - ".github/workflows/security-core.yml"
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - "config/**"
       - "tests/**"
       - "docs/**"
+      - "requirements*.txt"
       - ".github/workflows/security-core.yml"
 
 permissions:
@@ -28,17 +30,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install test dependency
-        run: python -m pip install --disable-pip-version-check pytest
+      - name: Install test dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          pytest fastapi uvicorn python-multipart openpyxl httpx
       - name: Compile public modules
         run: python -m compileall -q agent
       - name: Reject private identifiers and key material
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RInE 'CTJFyrdian|/home/ubuntu|amazon-keyword-rank-monitor-dev|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|9226' agent config docs; then
+          if grep -RInE 'CTJFyrdian|/home/ubuntu|amazon-keyword-rank-monitor-dev|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|9226' agent config docs tests; then
             echo "A forbidden private identifier or private-key marker was found."
             exit 1
           fi
-      - name: Run public security tests
-        run: python -m pytest -q tests/test_public_security_core.py
+      - name: Run all current public tests
+        run: python -m pytest -q tests
