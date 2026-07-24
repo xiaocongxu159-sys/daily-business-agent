@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable
 
@@ -55,7 +56,18 @@ def attach_lingxing(
     service = TlsLingxingSyncService(store, provider_factory=provider_factory)
     app.state.lingxing_store = store
     app.state.lingxing_service = service
-    app.add_event_handler("shutdown", service.stop)
+
+    original_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def integrated_lifespan(app_instance: FastAPI):
+        async with original_lifespan(app_instance):
+            try:
+                yield
+            finally:
+                service.stop()
+
+    app.router.lifespan_context = integrated_lifespan
 
     def is_local_ui_request(request: Request) -> bool:
         origin = request.headers.get("origin", "").rstrip("/")
