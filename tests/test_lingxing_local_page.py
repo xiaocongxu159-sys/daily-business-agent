@@ -6,12 +6,15 @@ import re
 import time
 from pathlib import Path
 
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.testclient import TestClient
 
 from agent import lingxing_integration
-from agent.lingxing_integration import create_integrated_app
-from agent.lingxing_secure_store import LingxingCredentials, TestOnlyProtector
+from agent.app import create_app
+from agent.lingxing_integration import attach_lingxing, create_integrated_app
+from agent.lingxing_secure_store import LingxingCredentials, LingxingLocalStore, TestOnlyProtector
+from agent.lingxing_tls_proxy import TlsLingxingSyncService
 from agent.settings import AgentSettings
 
 
@@ -28,9 +31,13 @@ class FakeProvider:
         }]
 
 
+def test_settings(root: Path) -> AgentSettings:
+    return AgentSettings(data_root=root, allowed_origins=())
+
+
 def build_app(root: Path):
     return create_integrated_app(
-        AgentSettings(data_root=root, allowed_origins=()),
+        test_settings(root),
         token="synthetic-test-token",
         provider_factory=FakeProvider,
         protector=TestOnlyProtector(),
@@ -46,6 +53,32 @@ def test_lingxing_static_file_exists() -> None:
     path = Path(lingxing_integration.__file__).resolve().parent / "static" / "lingxing.html"
     assert path.is_file()
     assert "领星自动同步" in path.read_text(encoding="utf-8")
+
+
+def test_base_agent_app_builds(tmp_path: Path) -> None:
+    app = create_app(test_settings(tmp_path), token="synthetic-test-token")
+    assert isinstance(app, FastAPI)
+    assert hasattr(app.state, "sessions")
+
+
+def test_lingxing_service_builds(tmp_path: Path) -> None:
+    store = LingxingLocalStore(tmp_path, protector=TestOnlyProtector())
+    service = TlsLingxingSyncService(store, provider_factory=FakeProvider)
+    assert service.store is store
+    assert service.is_running() is False
+
+
+def test_attach_lingxing_returns_same_app(tmp_path: Path) -> None:
+    app = create_app(test_settings(tmp_path), token="synthetic-test-token")
+    attached = attach_lingxing(
+        app,
+        provider_factory=FakeProvider,
+        protector=TestOnlyProtector(),
+        start_service=False,
+    )
+    assert attached is app
+    assert hasattr(app.state, "lingxing_store")
+    assert hasattr(app.state, "lingxing_service")
 
 
 def test_lingxing_route_is_registered(tmp_path: Path) -> None:
