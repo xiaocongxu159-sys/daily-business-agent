@@ -36,16 +36,33 @@ def build_app(root: Path):
     )
 
 
-def test_lingxing_page_has_no_external_resources_or_saved_values(tmp_path: Path) -> None:
+def test_lingxing_page_loads(tmp_path: Path) -> None:
     with TestClient(build_app(tmp_path), base_url="http://127.0.0.1:8766") as client:
         page = client.get("/lingxing")
         assert page.status_code == 200
         assert "领星自动同步" in page.text
+
+
+def test_lingxing_page_has_no_external_resources(tmp_path: Path) -> None:
+    with TestClient(build_app(tmp_path), base_url="http://127.0.0.1:8766") as client:
+        page = client.get("/lingxing")
         assert not re.search(r'<(?:script|img)[^>]+src=["\']https?://', page.text, re.I)
         assert not re.search(r'<(?:link|a)[^>]+href=["\']https?://', page.text, re.I)
+
+
+def test_lingxing_page_does_not_embed_credentials(tmp_path: Path) -> None:
+    with TestClient(build_app(tmp_path), base_url="http://127.0.0.1:8766") as client:
+        page = client.get("/lingxing")
         assert "synthetic-app-secret" not in page.text
         assert "type=\"password\"" in page.text
+
+
+def test_lingxing_page_has_security_headers(tmp_path: Path) -> None:
+    with TestClient(build_app(tmp_path), base_url="http://127.0.0.1:8766") as client:
+        page = client.get("/lingxing")
         assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+        assert page.headers["x-frame-options"] == "DENY"
+        assert page.headers["cache-control"] == "no-store"
 
 
 def test_configure_status_sync_and_disconnect_never_return_secrets(tmp_path: Path) -> None:
