@@ -38,7 +38,8 @@ def test_launcher_has_no_token_printing_option() -> None:
 
 def test_health_is_open_but_job_api_requires_local_authorization(tmp_path: Path) -> None:
     app = create_app(settings(tmp_path), token=TOKEN)
-    assert "src.local_engine" not in sys.modules
+    assert "src.data_merger" not in sys.modules
+    assert "src.excel_writer" not in sys.modules
 
     with TestClient(app, base_url="http://127.0.0.1:8766") as client:
         assert client.get("/health").status_code == 200
