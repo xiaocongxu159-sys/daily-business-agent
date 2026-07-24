@@ -23,7 +23,7 @@ permissions:
 jobs:
   chromium-local-pages:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,7 +37,11 @@ jobs:
           playwright==1.55.0
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
-      - name: Run report and dashboard Chromium acceptance
-        run: python tests/browser_public_pages.py --check report
-      - name: Run Lingxing Chromium acceptance
+      - name: Check report page in Chromium
+        run: python tests/browser_public_pages.py --check report-page
+      - name: Check report analysis in Chromium
+        run: python tests/browser_public_pages.py --check report-analysis
+      - name: Check report dashboard in Chromium
+        run: python tests/browser_public_pages.py --check report-dashboard
+      - name: Check Lingxing page in Chromium
         run: python tests/browser_public_pages.py --check lingxing
