@@ -178,13 +178,12 @@ def run_local_engine(request: LocalEngineRequest) -> LocalEngineResult:
         check_duplicate_rows,
         find_ad_only_rows,
         find_biz_only_rows,
-        generate_full_sku_date_grid,
         merge_business_and_ad,
         merge_inventory_to_daily,
-        merge_onto_full_grid,
     )
     from src.erp_report_loader import load_all_erp_reports
     from src.excel_writer import write_output_excel
+    from src.full_grid import generate_full_sku_date_grid, merge_onto_full_grid
     from src.html_dashboard_writer import write_html_dashboard
     from src.inventory_report_loader import aggregate_inventory, load_inventory_report
     from src.product_mapping_loader import build_sku_asin_dict, load_mapping
