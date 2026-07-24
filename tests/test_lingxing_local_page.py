@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -83,6 +84,11 @@ def test_configure_status_sync_and_disconnect_never_return_secrets(tmp_path: Pat
             headers={"Referer": "http://127.0.0.1:8766/lingxing"},
         )
         assert synced.status_code == 202
+
+        deadline = time.monotonic() + 3
+        while app.state.lingxing_service.is_running() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert app.state.lingxing_service.is_running() is False
 
         disconnected = client.delete(
             "/v1/lingxing/config",
