@@ -6,6 +6,7 @@ import re
 import time
 from pathlib import Path
 
+from fastapi.responses import HTMLResponse
 from fastapi.testclient import TestClient
 
 from agent import lingxing_integration
@@ -37,10 +38,28 @@ def build_app(root: Path):
     )
 
 
+def lingxing_route(app):
+    return next(route for route in app.routes if getattr(route, "path", "") == "/lingxing")
+
+
 def test_lingxing_static_file_exists() -> None:
     path = Path(lingxing_integration.__file__).resolve().parent / "static" / "lingxing.html"
     assert path.is_file()
     assert "领星自动同步" in path.read_text(encoding="utf-8")
+
+
+def test_lingxing_route_is_registered(tmp_path: Path) -> None:
+    app = build_app(tmp_path)
+    route = lingxing_route(app)
+    assert "GET" in route.methods
+
+
+def test_lingxing_route_endpoint_returns_html(tmp_path: Path) -> None:
+    app = build_app(tmp_path)
+    response = lingxing_route(app).endpoint()
+    assert isinstance(response, HTMLResponse)
+    assert response.status_code == 200
+    assert "领星自动同步" in response.body.decode("utf-8")
 
 
 def test_lingxing_route_returns_success(tmp_path: Path) -> None:
