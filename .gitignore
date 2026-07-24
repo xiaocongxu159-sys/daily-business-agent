@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+*.spec.bak
+*.exe
+*.msi
+*.zip
+*.sha256
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+secrets/
+certificates/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*credentials*.json
+*secret*.json
+
+# Local runtime state
+agent_state.json
+*.log
+logs/
+data/
+storage/
+output/
+outputs/
+results/
+cache/
+tmp/
+temp/
+
+# Local business files
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*.jsonl
