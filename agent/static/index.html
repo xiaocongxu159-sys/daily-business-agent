@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>每日经营数据分析</title>
+  <style>
+    :root { color-scheme:light; font-family:Inter,"Microsoft YaHei",sans-serif; --blue:#1d4ed8; --ink:#172033; --muted:#64748b; --line:#dfe5ee; --bg:#f4f6f9; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); }
+    main { width:min(1180px,calc(100% - 32px)); margin:28px auto 60px; }
+    h1 { margin:0 0 6px; font-size:30px; }
+    h2 { margin:0 0 14px; font-size:20px; }
+    h3 { margin:0 0 8px; font-size:16px; }
+    .sub,.muted { color:var(--muted); }
+    .notice { margin:18px 0; padding:12px 14px; border:1px solid #9ee7c1; border-radius:10px; background:#ecfdf5; }
+    .card { margin-top:14px; padding:18px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:0 1px 3px rgba(15,23,42,.05); }
+    .analysis-bar { display:grid; grid-template-columns:minmax(260px,1fr) auto; gap:12px; align-items:end; }
+    label { display:flex; flex-direction:column; gap:7px; color:#475569; font-size:13px; font-weight:600; }
+    input[type="text"],input[type="file"] { width:100%; min-height:42px; padding:9px 10px; border:1px solid #cbd5e1; border-radius:8px; background:#fff; color:#1f2937; }
+    button,.button-link { min-height:42px; border:0; border-radius:8px; padding:10px 16px; cursor:pointer; background:var(--blue); color:#fff; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; }
+    button.secondary { background:#475569; }
+    .button-link.light { border:1px solid #bfd0e5; background:#eff6ff; color:#1e4e87; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:14px; }
+    .file-card { padding:15px; border:1px solid var(--line); border-radius:11px; background:#fff; }
+    .file-card.required { border-left:4px solid var(--blue); }
+    .file-card p { min-height:38px; margin:5px 0 10px; color:var(--muted); font-size:13px; line-height:1.55; }
+    .file-card details { margin-top:10px; color:#475569; font-size:13px; }
+    .file-card summary,details.advanced summary { cursor:pointer; font-weight:700; color:#315b86; }
+    .source-text { margin:8px 0 0; padding:10px; border-radius:8px; background:#f8fafc; line-height:1.65; }
+    .template-row { margin:10px 0; }
+    .template-row a { color:#1d4ed8; font-size:13px; font-weight:700; }
+    .saved-mapping { margin:12px 0 0; padding:11px 12px; border:1px solid #cfe0f6; border-radius:9px; background:#f6faff; color:#315b86; }
+    .saved-mapping label { display:flex; flex-direction:row; align-items:center; gap:8px; font-weight:600; }
+    .status-line,.result-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .status { display:inline-block; border-radius:999px; padding:4px 10px; background:#e2e8f0; font-weight:700; }
+    .status.success { background:#dcfce7; color:#166534; }
+    .status.failed { background:#fee2e2; color:#991b1b; }
+    .status.running,.status.queued { background:#dbeafe; color:#1e40af; }
+    #message { margin-top:12px; white-space:pre-wrap; color:#334155; }
+    #message.error { color:#b91c1c; }
+    .result-actions { margin:12px 0; }
+    .result-primary { min-height:52px; padding:0 22px; font-size:16px; }
+    details.advanced { margin-top:14px; border-top:1px solid #edf1f5; padding-top:12px; }
+    table { width:100%; border-collapse:collapse; margin-top:12px; }
+    th,td { padding:9px 8px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:13px; }
+    .mode-note { margin:0 0 14px; padding:10px 12px; border-radius:8px; background:#fff8e8; color:#77581a; font-size:13px; }
+    @media (max-width:720px) { .analysis-bar,.grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>每日经营数据分析</h1>
+  <span hidden>每日经营数据本地 Agent</span>
+  <p class="sub">选择报表后点击一次“开始分析”，自动生成经营看板和完整 Excel。</p>
+  <div class="notice">所有原始报表和结果只在你电脑的 <strong>127.0.0.1</strong> 本地 Agent 中处理，不会上传到服务器。</div>
+
+  <section class="card">
+    <div class="analysis-bar">
+      <label>分析名称（可不填）
+        <input id="job-label" type="text" placeholder="例如：每日经营复盘">
+      </label>
+      <button id="start-analysis">开始分析</button>
+    </div>
+    <div class="status-line" style="margin-top:14px">
+      <span>处理状态：</span><span id="job-status" class="status">尚未开始</span>
+      <span class="muted" id="job-step">请选择文件</span>
+    </div>
+    <div id="message"></div>
+  </section>
+
+  <section class="card">
+    <h2>选择报表</h2>
+    <div class="mode-note">两种数据模式二选一：上传“ERP 产品表现 ASIN”，或者上传“业务报告/广告报告”。不要混用。</div>
+    <div class="grid" id="file-grid"></div>
+    <div id="saved-mapping" class="saved-mapping" hidden></div>
+  </section>
+
+  <section class="card" id="result-card">
+    <h2>分析结果</h2>
+    <div id="artifacts" class="muted">分析完成后，这里会直接显示“打开经营看板”和“下载完整 Excel”。</div>
+    <details class="advanced">
+      <summary>查看本次文件和技术结果</summary>
+      <div id="uploaded-files" class="muted">尚未开始分析。</div>
+      <div id="technical-artifacts"></div>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>最近分析记录</h2>
+    <button id="load-history" class="secondary">刷新记录</button>
+    <div id="history"></div>
+  </section>
+</main>
+<script>
+const categories = [
+  {key:"mapping",title:"商品映射",required:true,multiple:false,help:"用于匹配 SKU、ASIN、商品名称和父子体关系。首次使用必须选择；之后可复用本机记住的映射。",source:"推荐从 Seller Central 下载 All Listings Report 或 Active Listings Report；也可以下载软件模板后填写。",template:"/v1/templates/product-mapping.csv",templateLabel:"下载商品映射模板"},
+  {key:"erp",title:"ERP 产品表现 ASIN",required:false,multiple:true,help:"使用领星或其他 ERP 导出的综合产品表现报表时选择此项。选择后不要再上传业务报告和广告报告。",source:"从正在使用的 ERP 中导出包含日期、ASIN/MSKU、销售额、订单、流量和广告数据的产品表现报表。"},
+  {key:"business",title:"Amazon 业务报告",required:false,multiple:true,help:"包含销售额、订单量、Sessions 和 Page Views。可上传一个或多个日期文件。",source:"Seller Central → Reports → Business Reports → Detail Page Sales and Traffic by Child Item/ASIN。下载后保持原文件不变。"},
+  {key:"advertising",title:"Amazon 广告报告",required:false,multiple:true,help:"包含曝光、点击、花费、广告订单和广告销售额。可上传一个或多个文件。",source:"Amazon Ads → Measurement & Reporting → Sponsored ads reports → Advertised product report。下载后保持原文件不变。"},
+  {key:"inventory",title:"库存报告（可选）",required:false,multiple:true,help:"用于计算 FBA 可售、在途、预留、不可售、总库存和可售天数。",source:"Seller Central → Inventory Reports 或 FBA Fulfillment Reports；也可以使用 ERP 库存报表。"},
+  {key:"plan",title:"月度计划（可选）",required:false,multiple:true,help:"用于比较实际与销售目标、广告预算和补货计划。它不会覆盖真实经营数据。",source:"这是用户自己的经营目标，不从 Amazon 下载。请下载模板后填写。",template:"/v1/templates/monthly-plan.xlsx",templateLabel:"下载月度计划模板"}
+];
+let currentJobId = null;
+let pollTimer = null;
+let savedMappingAvailable = false;
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
+}
+function friendlyError(message) {
+  const text = String(message || "");
+  const mappings = [
+    ["only one mapping file is allowed","当前分析已经有商品映射文件，无需重复选择。"],
+    ["exactly one mapping file is required","请选择一份商品映射文件，或勾选复用本机已保存的商品映射。"],
+    ["no saved mapping file is available","本机还没有保存过商品映射，请先选择一份商品映射文件。"],
+    ["ERP files cannot be mixed with business/advertising files","ERP 综合报表不能与业务报告或广告报告混用，请只选择一种模式。"],
+    ["provide ERP files or at least one business/advertising file","请选择 ERP 产品表现报表，或者至少选择一份业务报告/广告报告。"],
+    ["file exceeds max_file_bytes","单个文件太大，超过本地 Agent 限制。"],
+    ["job exceeds max_job_bytes","本次选择的文件总量太大，请减少文件后重试。"],
+    ["unsupported file suffix","文件格式不支持，请选择 CSV、TSV、TXT、XLSX 或 XLS。"]
+  ];
+  const found = mappings.find(item => text.includes(item[0]));
+  return found ? found[1] : text;
+}
+function showMessage(text,isError=false) {
+  const node = document.getElementById("message");
+  node.textContent = text || "";
+  node.className = isError ? "error" : "";
+}
+function setStep(status,text) {
+  const node = document.getElementById("job-status");
+  node.textContent = status;
+  node.className = `status ${status}`;
+  document.getElementById("job-step").textContent = text;
+}
+async function api(path,options={}) {
+  const response = await fetch(path,options);
+  const type = response.headers.get("content-type") || "";
+  const body = type.includes("application/json") ? await response.json() : await response.text();
+  if (!response.ok) throw new Error(friendlyError(body && body.detail ? body.detail : String(body || response.statusText)));
+  return body;
+}
+function buildFileCards() {
+  const grid = document.getElementById("file-grid");
+  grid.innerHTML = "";
+  categories.forEach(item => {
+    const card = document.createElement("div");
+    card.className = `file-card${item.required ? " required" : ""}`;
+    card.innerHTML = `<h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.help)}</p>`;
+    if (item.template) {
+      const row = document.createElement("div");
+      row.className = "template-row";
+      row.innerHTML = `<a href="${item.template}">${escapeHtml(item.templateLabel)}</a>`;
+      card.appendChild(row);
+    }
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,.tsv,.txt,.xlsx,.xls";
+    input.multiple = item.multiple;
+    input.id = `input-${item.key}`;
+    const details = document.createElement("details");
+    details.innerHTML = `<summary>这份数据从哪里获得</summary><div class="source-text">${escapeHtml(item.source)}</div>`;
+    card.append(input,details);
+    grid.appendChild(card);
+  });
+}
+async function loadSavedMappingStatus() {
+  try {
+    const payload = await api("/v1/saved-mapping");
+    savedMappingAvailable = Boolean(payload.available);
+    const node = document.getElementById("saved-mapping");
+    if (!savedMappingAvailable) { node.hidden = true; return; }
+    node.hidden = false;
+    node.innerHTML = `<label><input id="reuse-saved-mapping" type="checkbox" checked> 本次复用本机已保存的商品映射（${escapeHtml(payload.name)}）</label><div class="muted" style="margin-top:6px">本次也可以重新选择商品映射文件，选择新文件后会自动更新本机保存版本。</div>`;
+  } catch (error) { showMessage(error.message,true); }
+}
+function selectedFiles() {
+  return Object.fromEntries(categories.map(item => [item.key,[...document.getElementById(`input-${item.key}`).files]]));
+}
+function validateSelection(files) {
+  const reuse = savedMappingAvailable && document.getElementById("reuse-saved-mapping")?.checked;
+  if (!files.mapping.length && !reuse) throw new Error("请选择商品映射文件，或勾选复用本机已保存的商品映射。");
+  const hasErp = files.erp.length > 0;
+  const hasSeparate = files.business.length > 0 || files.advertising.length > 0;
+  if (hasErp && hasSeparate) throw new Error("ERP 综合报表不能与业务报告或广告报告混用，请只选择一种模式。");
+  if (!hasErp && !hasSeparate) throw new Error("请选择 ERP 产品表现报表，或者至少选择一份业务报告/广告报告。");
+  return {reuse};
+}
+async function uploadFiles(files) {
+  for (const item of categories) for (const file of files[item.key]) {
+    setStep("running",`正在读取：${file.name}`);
+    const form = new FormData();
+    form.append("file",file,file.name);
+    await api(`/v1/jobs/${currentJobId}/files/${item.key}`,{method:"POST",body:form});
+  }
+}
+async function startAnalysis() {
+  const button = document.getElementById("start-analysis");
+  button.disabled = true;
+  showMessage("");
+  document.getElementById("artifacts").textContent = "正在准备本地分析……";
+  document.getElementById("technical-artifacts").innerHTML = "";
+  try {
+    const files = selectedFiles();
+    const {reuse} = validateSelection(files);
+    setStep("running","正在创建本地分析记录");
+    const job = await api("/v1/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({label:document.getElementById("job-label").value.trim(),write_excel:true,write_html:true})});
+    currentJobId = job.job_id;
+    if (!files.mapping.length && reuse) await api(`/v1/jobs/${currentJobId}/reuse-saved-mapping`,{method:"POST"});
+    await uploadFiles(files);
+    setStep("queued","文件准备完成，正在开始分析");
+    await api(`/v1/jobs/${currentJobId}/run`,{method:"POST"});
+    showMessage("分析已开始。页面会自动刷新状态，无需手动操作。");
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(refreshJob,1000);
+    await refreshJob();
+  } catch (error) {
+    setStep("failed","未开始或处理失败");
+    showMessage(error.message,true);
+    button.disabled = false;
+  }
+}
+function renderFiles(job) {
+  const files = job.files || {};
+  const lines = [];
+  categories.forEach(item => {
+    const entries = files[item.key] || [];
+    if (entries.length) lines.push(`<h3>${escapeHtml(item.title)}（${entries.length}）</h3><ul>${entries.map(entry => `<li>${escapeHtml(entry.name)}</li>`).join("")}</ul>`);
+  });
+  document.getElementById("uploaded-files").innerHTML = lines.length ? lines.join("") : "尚无文件。";
+}
+function renderJob(job) {
+  const status = job.status || "draft";
+  const text = ({draft:"正在准备文件",queued:"等待本地处理",running:"正在生成 Excel 和经营看板",success:"分析完成",failed:"分析失败"})[status] || status;
+  setStep(status,text);
+  renderFiles(job);
+  if (job.error) showMessage(friendlyError(job.error),true);
+  if (status === "success") loadArtifacts();
+  if (["success","failed"].includes(status)) {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    document.getElementById("start-analysis").disabled = false;
+    loadHistory();
+  }
+}
+async function refreshJob() {
+  if (!currentJobId) return;
+  try { renderJob(await api(`/v1/jobs/${currentJobId}`)); }
+  catch (error) { showMessage(error.message,true); document.getElementById("start-analysis").disabled = false; }
+}
+async function openOutputFolder() {
+  if (!currentJobId) return;
+  try {
+    const payload = await api(`/v1/jobs/${currentJobId}/open-output-folder`,{method:"POST"});
+    if (!payload.opened) showMessage(`结果目录：${payload.path}`);
+  } catch (error) { showMessage(error.message,true); }
+}
+async function loadArtifacts() {
+  if (!currentJobId) return;
+  try {
+    const payload = await api(`/v1/jobs/${currentJobId}/artifacts`);
+    const excel = payload.artifacts.find(item => item.relative_path.startsWith("output/") && item.relative_path.endsWith(".xlsx"));
+    const actions = [`<a class="button-link result-primary" href="/v1/jobs/${currentJobId}/dashboard/" target="_blank" rel="noopener">打开经营看板</a>`];
+    if (excel) {
+      const encoded = excel.relative_path.split("/").map(encodeURIComponent).join("/");
+      actions.push(`<a class="button-link light result-primary" href="/v1/jobs/${currentJobId}/artifacts/${encoded}">下载完整 Excel</a>`);
+    }
+    actions.push(`<button id="open-output-folder" class="secondary result-primary" type="button">打开结果文件夹</button>`);
+    document.getElementById("artifacts").innerHTML = `<div class="result-actions">${actions.join("")}</div><div class="muted">经营看板会直接在浏览器打开，不需要再下载或移动 HTML、JS 文件。</div>`;
+    document.getElementById("open-output-folder").addEventListener("click",openOutputFolder);
+    document.getElementById("technical-artifacts").innerHTML = `<h3>全部技术产物</h3>${payload.artifacts.map(item => { const encoded = item.relative_path.split("/").map(encodeURIComponent).join("/"); return `<div><a href="/v1/jobs/${currentJobId}/artifacts/${encoded}">${escapeHtml(item.relative_path)}</a></div>`; }).join("")}`;
+  } catch (error) { showMessage(error.message,true); }
+}
+async function loadHistory() {
+  try {
+    const payload = await api("/v1/jobs");
+    const node = document.getElementById("history");
+    if (!payload.jobs.length) { node.innerHTML = '<p class="muted">暂无分析记录。</p>'; return; }
+    node.innerHTML = `<table><thead><tr><th>名称</th><th>状态</th><th>更新时间</th><th></th></tr></thead><tbody>${payload.jobs.slice(0,20).map(job => `<tr><td>${escapeHtml(job.label || "未命名分析")}</td><td>${escapeHtml(job.status)}</td><td>${escapeHtml(job.updated_at)}</td><td><button class="secondary" data-open-job="${escapeHtml(job.job_id)}">打开</button></td></tr>`).join("")}</tbody></table>`;
+    node.querySelectorAll("[data-open-job]").forEach(button => button.addEventListener("click",async () => {
+      currentJobId = button.dataset.openJob;
+      await refreshJob();
+      document.getElementById("result-card").scrollIntoView({behavior:"smooth",block:"start"});
+    }));
+  } catch (error) { showMessage(error.message,true); }
+}
+document.getElementById("start-analysis").addEventListener("click",startAnalysis);
+document.getElementById("load-history").addEventListener("click",loadHistory);
+buildFileCards();
+loadSavedMappingStatus();
+loadHistory();
+</script>
+</body>
+</html>
