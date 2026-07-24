@@ -49,6 +49,12 @@ jobs:
           fi
       - name: Check Lingxing static file
         run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_static_file_exists
+      - name: Check base Agent construction
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_base_agent_app_builds
+      - name: Check Lingxing service construction
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_service_builds
+      - name: Check Lingxing attachment
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_attach_lingxing_returns_same_app
       - name: Check Lingxing route registration
         run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_route_is_registered
       - name: Check Lingxing route function
