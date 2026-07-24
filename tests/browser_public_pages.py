@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Real-Chromium synthetic acceptance check for the public local pages."""
+"""Real-Chromium synthetic acceptance checks for the public local pages."""
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import tempfile
@@ -59,6 +60,7 @@ def _wait_for_server(timeout_seconds: float = 15) -> None:
 
 
 def _write_synthetic_inputs(root: Path) -> dict[str, Path]:
+    root.mkdir(parents=True, exist_ok=True)
     mapping = root / "mapping.csv"
     business = root / "business_20260724.csv"
     advertising = root / "advertising.csv"
@@ -97,7 +99,7 @@ def _watch_network(context: BrowserContext) -> list[str]:
     return external
 
 
-def _check_report_page(page: Page, inputs: dict[str, Path]) -> Page:
+def _check_report_page(page: Page, inputs: dict[str, Path]) -> None:
     page.goto(BASE_URL, wait_until="domcontentloaded")
     expect(page).to_have_title("每日经营数据分析")
     expect(page.locator(".notice")).to_contain_text("只在你电脑")
@@ -118,7 +120,7 @@ def _check_report_page(page: Page, inputs: dict[str, Path]) -> Page:
     expect(dashboard).to_have_title("每日经营看板")
     expect(dashboard.locator("body")).to_contain_text("Synthetic Browser Product")
     expect(dashboard.locator("body")).to_contain_text("239.88")
-    return dashboard
+    dashboard.close()
 
 
 def _check_lingxing_page(page: Page) -> None:
@@ -145,8 +147,8 @@ def _check_lingxing_page(page: Page) -> None:
     expect(page.locator("#shops")).to_contain_text("Synthetic Browser Store")
 
 
-def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="daily-agent-browser-") as temp:
+def _run_check(check: str) -> None:
+    with tempfile.TemporaryDirectory(prefix=f"daily-agent-browser-{check}-") as temp:
         root = Path(temp)
         app = create_integrated_app(
             AgentSettings(data_root=root / "agent-data", host=HOST, port=PORT),
@@ -161,7 +163,6 @@ def main() -> int:
         thread = threading.Thread(target=server.run, name="browser-test-server", daemon=True)
         thread.start()
         _wait_for_server()
-        inputs = _write_synthetic_inputs(root / "inputs")
 
         try:
             with sync_playwright() as playwright:
@@ -169,9 +170,12 @@ def main() -> int:
                 context = browser.new_context(accept_downloads=True)
                 external = _watch_network(context)
                 page = context.new_page()
-                dashboard = _check_report_page(page, inputs)
-                _check_lingxing_page(page)
-                dashboard.close()
+                if check == "report":
+                    _check_report_page(page, _write_synthetic_inputs(root / "inputs"))
+                elif check == "lingxing":
+                    _check_lingxing_page(page)
+                else:
+                    raise ValueError(f"unsupported browser check: {check}")
                 context.close()
                 browser.close()
                 if external:
@@ -183,7 +187,14 @@ def main() -> int:
             thread.join(timeout=15)
             if thread.is_alive():
                 raise RuntimeError("browser-test server did not stop cleanly")
-    print("browser acceptance passed: report, dashboard, Lingxing, local-only network")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", choices=("report", "lingxing"), required=True)
+    args = parser.parse_args()
+    _run_check(args.check)
+    print(f"browser acceptance passed: {args.check}, local-only network")
     return 0
 
 
