@@ -48,37 +48,25 @@ jobs:
             exit 1
           fi
       - name: Check Lingxing static file
-        run: >-
-          python -m pytest -q
-          tests/test_lingxing_local_page.py::test_lingxing_static_file_exists
-      - name: Check Lingxing route status
-        run: >-
-          python -m pytest -q
-          tests/test_lingxing_local_page.py::test_lingxing_route_returns_success
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_static_file_exists
+      - name: Check Lingxing route registration
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_route_is_registered
+      - name: Check Lingxing route function
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_route_endpoint_returns_html
+      - name: Check Lingxing HTTP route status
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_route_returns_success
       - name: Check Lingxing page title
-        run: >-
-          python -m pytest -q
-          tests/test_lingxing_local_page.py::test_lingxing_page_contains_title
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_page_contains_title
       - name: Check Lingxing external resources
-        run: >-
-          python -m pytest -q
-          tests/test_lingxing_local_page.py::test_lingxing_page_has_no_external_resources
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_page_has_no_external_resources
       - name: Check Lingxing credential fields
-        run: >-
-          python -m pytest -q
-          tests/test_lingxing_local_page.py::test_lingxing_page_does_not_embed_credentials
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_page_does_not_embed_credentials
       - name: Check Lingxing security headers
-        run: >-
-          python -m pytest -q
-          tests/test_lingxing_local_page.py::test_lingxing_page_has_security_headers
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_lingxing_page_has_security_headers
       - name: Check Lingxing configure sync and disconnect
-        run: >-
-          python -m pytest -q
-          tests/test_lingxing_local_page.py::test_configure_status_sync_and_disconnect_never_return_secrets
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_configure_status_sync_and_disconnect_never_return_secrets
       - name: Check Lingxing cross-site blocking
-        run: >-
-          python -m pytest -q
-          tests/test_lingxing_local_page.py::test_cross_site_request_cannot_configure_lingxing
+        run: python -m pytest -q tests/test_lingxing_local_page.py::test_cross_site_request_cannot_configure_lingxing
       - name: Run remaining public tests
         run: >-
           python -m pytest -q tests
