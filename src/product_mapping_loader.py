@@ -10,6 +10,14 @@ from src.report_detector import find_column
 
 _ALIASES = None
 
+IDENTITY_ALIASES = {
+    "shop_id": ("shop_id", "店铺ID", "店铺 Id", "sid"),
+    "shop_name": ("shop_name", "店铺", "店铺名称"),
+    "marketplace": ("marketplace", "站点", "国家", "marketplace_id"),
+    "parent_asin": ("parent_asin", "父ASIN", "Parent ASIN"),
+    "msku": ("msku", "MSKU"),
+}
+
 
 def _load_aliases():
     global _ALIASES
@@ -43,12 +51,23 @@ def load_mapping(filepath):
         result[output_column] = (
             dataframe[source].astype(str).str.strip()
             if source
-            else pd.Series([""] * len(dataframe))
+            else pd.Series([""] * len(dataframe), index=dataframe.index)
         )
-    result_df = pd.DataFrame(result)
+    result_df = pd.DataFrame(result, index=dataframe.index)
+    for output_column, candidates in IDENTITY_ALIASES.items():
+        source = find_column(dataframe, candidates)
+        result_df[output_column] = (
+            dataframe[source].astype(str).str.strip()
+            if source
+            else pd.Series([""] * len(dataframe), index=dataframe.index)
+        )
+
     result_df["ASIN"] = result_df.get("asin1", "")
     if "ASIN" not in result_df or result_df["ASIN"].eq("").all():
-        asin_column = find_column(dataframe, aliases.get("asin1", ["asin1", "asin", "ASIN"]))
+        asin_column = find_column(
+            dataframe,
+            aliases.get("asin1", ["asin1", "asin", "ASIN"]),
+        )
         result_df["ASIN"] = (
             dataframe[asin_column].astype(str).str.strip()
             if asin_column
@@ -64,9 +83,11 @@ def load_mapping(filepath):
         errors.append(f"有 {int(missing_asin.sum())} 行缺少 ASIN")
 
     valid = result_df[~missing_sku & ~missing_asin].copy()
-    valid = valid.drop_duplicates(subset=["SKU", "ASIN"]).reset_index(drop=True)
+    valid = valid.drop_duplicates(
+        subset=["shop_id", "marketplace", "SKU", "ASIN"]
+    ).reset_index(drop=True)
 
-    output = pd.DataFrame()
+    output = pd.DataFrame(index=valid.index)
     output["SKU"] = valid.get("seller-sku", valid.get("SKU", ""))
     output["ASIN"] = valid.get("ASIN", "")
     output["产品名称"] = valid.get("item-name", "")
@@ -75,18 +96,25 @@ def load_mapping(filepath):
     output["配送方式"] = valid.get("fulfillment-channel", "")
     output["是否在售"] = valid.get("status", "")
     output["备注"] = ""
+    output["shop_id"] = valid.get("shop_id", "")
+    output["shop_name"] = valid.get("shop_name", "")
+    output["marketplace"] = valid.get("marketplace", "")
+    output["parent_asin"] = valid.get("parent_asin", "")
     output["seller_sku"] = output["SKU"]
-    output["msku"] = ""
+    output["msku"] = valid.get("msku", "")
     output["mapping_source"] = (
         "All_Listings_Report"
         if "all_listings" in path.stem.lower()
         else "user_provided_mapping"
     )
     output = standardize_identity_fields(output)
+
     conflict_counts = output.groupby("offer_key", dropna=True)["ASIN"].transform("nunique")
-    output["mapping_status"] = conflict_counts.map(
-        lambda count: "pending_confirmation" if count > 1 else "confirmed"
-    )
+    output["mapping_status"] = "confirmed"
+    output.loc[
+        output["identity_status"].ne("confirmed") | conflict_counts.gt(1),
+        "mapping_status",
+    ] = "pending_confirmation"
     return output, errors
 
 
