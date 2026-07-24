@@ -47,5 +47,19 @@ jobs:
             echo "A forbidden private identifier or private-key marker was found."
             exit 1
           fi
-      - name: Run all current public tests
-        run: python -m pytest -q tests
+      - name: Check Lingxing page resources
+        run: >-
+          python -m pytest -q
+          tests/test_lingxing_local_page.py::test_lingxing_page_has_no_external_resources_or_saved_values
+      - name: Check Lingxing configure sync and disconnect
+        run: >-
+          python -m pytest -q
+          tests/test_lingxing_local_page.py::test_configure_status_sync_and_disconnect_never_return_secrets
+      - name: Check Lingxing cross-site blocking
+        run: >-
+          python -m pytest -q
+          tests/test_lingxing_local_page.py::test_cross_site_request_cannot_configure_lingxing
+      - name: Run remaining public tests
+        run: >-
+          python -m pytest -q tests
+          --ignore=tests/test_lingxing_local_page.py
