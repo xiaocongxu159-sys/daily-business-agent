@@ -10,7 +10,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -130,20 +130,41 @@ def _run_report_analysis(page: Page, inputs: dict[str, Path]) -> None:
         )
 
 
-def _open_report_dashboard(page: Page, inputs: dict[str, Path]) -> None:
+def _dashboard_href(page: Page, inputs: dict[str, Path]) -> str:
     _run_report_analysis(page, inputs)
-    with page.expect_popup() as popup_info:
-        page.get_by_role("link", name="打开经营看板").click()
-    dashboard = popup_info.value
-    dashboard.wait_for_load_state("domcontentloaded")
+    link = page.get_by_role("link", name="打开经营看板")
+    expect(link).to_have_attribute("target", "_blank")
+    href = link.get_attribute("href")
+    if not href or not href.startswith("/v1/jobs/") or not href.endswith("/dashboard/"):
+        raise AssertionError(f"unexpected dashboard href: {href!r}")
+    return href
+
+
+def _load_dashboard(page: Page, inputs: dict[str, Path]) -> Page:
+    href = _dashboard_href(page, inputs)
+    dashboard = page.context.new_page()
+    response = dashboard.goto(urljoin(BASE_URL, href), wait_until="domcontentloaded")
+    if response is None or response.status != 200:
+        raise AssertionError(
+            f"dashboard returned {None if response is None else response.status}"
+        )
     expect(dashboard).to_have_title("每日经营看板")
+    return dashboard
+
+
+def _check_dashboard_content(page: Page, inputs: dict[str, Path]) -> None:
+    dashboard = _load_dashboard(page, inputs)
     expect(dashboard.locator("body")).to_contain_text("Synthetic Browser Product")
     expect(dashboard.locator("body")).to_contain_text("239.88")
     dashboard.close()
 
 
 def _check_lingxing_page(page: Page) -> None:
-    page.goto(f"{BASE_URL}/lingxing", wait_until="domcontentloaded")
+    response = page.goto(f"{BASE_URL}/lingxing", wait_until="domcontentloaded")
+    if response is None or response.status != 200:
+        raise AssertionError(
+            f"Lingxing page returned {None if response is None else response.status}"
+        )
     expect(page).to_have_title("领星自动同步 · 每日经营数据")
     expect(page.locator(".notice")).to_contain_text("数据只保存在这台电脑")
     page.locator("#show-config").click()
@@ -194,8 +215,13 @@ def _run_check(check: str) -> None:
                     _open_report_page(page)
                 elif check == "report-analysis":
                     _run_report_analysis(page, inputs)
-                elif check == "report-dashboard":
-                    _open_report_dashboard(page, inputs)
+                elif check == "dashboard-link":
+                    _dashboard_href(page, inputs)
+                elif check == "dashboard-load":
+                    dashboard = _load_dashboard(page, inputs)
+                    dashboard.close()
+                elif check == "dashboard-content":
+                    _check_dashboard_content(page, inputs)
                 elif check == "lingxing":
                     _check_lingxing_page(page)
                 else:
@@ -217,7 +243,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--check",
-        choices=("report-page", "report-analysis", "report-dashboard", "lingxing"),
+        choices=(
+            "report-page",
+            "report-analysis",
+            "dashboard-link",
+            "dashboard-load",
+            "dashboard-content",
+            "lingxing",
+        ),
         required=True,
     )
     args = parser.parse_args()
