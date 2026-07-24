@@ -37,5 +37,7 @@ jobs:
           playwright==1.55.0
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
-      - name: Run real Chromium acceptance
-        run: python tests/browser_public_pages.py
+      - name: Run report and dashboard Chromium acceptance
+        run: python tests/browser_public_pages.py --check report
+      - name: Run Lingxing Chromium acceptance
+        run: python tests/browser_public_pages.py --check lingxing
