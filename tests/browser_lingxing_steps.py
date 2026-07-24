@@ -61,7 +61,7 @@ def _configure(page: Page) -> None:
 
 def _disconnect(page: Page) -> None:
     _configure(page)
-    page.once("dialog", lambda dialog: dialog.accept())
+    page.evaluate("window.confirm = () => true")
     page.locator("#disconnect").click()
     expect(page.locator("#message")).to_contain_text("已断开", timeout=10_000)
     expect(page.locator("#shops")).to_contain_text("Synthetic Browser Store")
