@@ -152,10 +152,43 @@ def _load_dashboard(page: Page, inputs: dict[str, Path]) -> Page:
     return dashboard
 
 
-def _check_dashboard_content(page: Page, inputs: dict[str, Path]) -> None:
+def _dashboard_payload(dashboard: Page) -> dict:
+    text = dashboard.locator("#dashboard-data").text_content()
+    if not text:
+        raise AssertionError("dashboard embedded payload is empty")
+    payload = json.loads(text)
+    if not payload.get("daily"):
+        raise AssertionError("dashboard daily payload is empty")
+    return payload
+
+
+def _check_dashboard_payload_product(page: Page, inputs: dict[str, Path]) -> None:
     dashboard = _load_dashboard(page, inputs)
-    expect(dashboard.locator("body")).to_contain_text("Synthetic Browser Product")
-    expect(dashboard.locator("body")).to_contain_text("239.88")
+    payload = _dashboard_payload(dashboard)
+    products = [str(row.get("产品名称", "")) for row in payload["daily"]]
+    if "Synthetic Browser Product" not in products:
+        raise AssertionError(f"product name missing from dashboard payload: {products!r}")
+    dashboard.close()
+
+
+def _check_dashboard_payload_sales(page: Page, inputs: dict[str, Path]) -> None:
+    dashboard = _load_dashboard(page, inputs)
+    payload = _dashboard_payload(dashboard)
+    sales = [float(row.get("销售额", 0) or 0) for row in payload["daily"]]
+    if not any(abs(value - 239.88) < 0.001 for value in sales):
+        raise AssertionError(f"sales value missing from dashboard payload: {sales!r}")
+    dashboard.close()
+
+
+def _check_dashboard_rendered_product(page: Page, inputs: dict[str, Path]) -> None:
+    dashboard = _load_dashboard(page, inputs)
+    expect(dashboard.locator("#body")).to_contain_text("Synthetic Browser Product")
+    dashboard.close()
+
+
+def _check_dashboard_rendered_sales(page: Page, inputs: dict[str, Path]) -> None:
+    dashboard = _load_dashboard(page, inputs)
+    expect(dashboard.locator("#cards")).to_contain_text("239.88")
     dashboard.close()
 
 
@@ -220,8 +253,14 @@ def _run_check(check: str) -> None:
                 elif check == "dashboard-load":
                     dashboard = _load_dashboard(page, inputs)
                     dashboard.close()
-                elif check == "dashboard-content":
-                    _check_dashboard_content(page, inputs)
+                elif check == "dashboard-payload-product":
+                    _check_dashboard_payload_product(page, inputs)
+                elif check == "dashboard-payload-sales":
+                    _check_dashboard_payload_sales(page, inputs)
+                elif check == "dashboard-render-product":
+                    _check_dashboard_rendered_product(page, inputs)
+                elif check == "dashboard-render-sales":
+                    _check_dashboard_rendered_sales(page, inputs)
                 elif check == "lingxing":
                     _check_lingxing_page(page)
                 else:
@@ -248,7 +287,10 @@ def main() -> int:
             "report-analysis",
             "dashboard-link",
             "dashboard-load",
-            "dashboard-content",
+            "dashboard-payload-product",
+            "dashboard-payload-sales",
+            "dashboard-render-product",
+            "dashboard-render-sales",
             "lingxing",
         ),
         required=True,
