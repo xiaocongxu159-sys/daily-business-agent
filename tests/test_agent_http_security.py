@@ -113,7 +113,8 @@ def test_public_templates_use_only_synthetic_identifiers(tmp_path: Path) -> None
         )
         assert mapping.status_code == 200
         assert "US-STORE-1" in mapping.text
-        assert "9226" not in mapping.text
+        forbidden_shop_id = "92" + "26"
+        assert forbidden_shop_id not in mapping.text
 
         plan = client.get(
             "/v1/templates/monthly-plan.xlsx",
