@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "agent/**"
+      - "src/**"
       - "config/**"
       - "tests/**"
       - "docs/**"
@@ -13,6 +14,7 @@ on:
     branches: [main]
     paths:
       - "agent/**"
+      - "src/**"
       - "config/**"
       - "tests/**"
       - "docs/**"
@@ -35,12 +37,12 @@ jobs:
           python -m pip install --disable-pip-version-check
           pytest fastapi uvicorn python-multipart openpyxl httpx
       - name: Compile public modules
-        run: python -m compileall -q agent
+        run: python -m compileall -q agent src
       - name: Reject private identifiers and key material
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RInE 'CTJFyrdian|/home/ubuntu|amazon-keyword-rank-monitor-dev|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|9226' agent config docs tests; then
+          if grep -RInE 'CTJFyrdian|/home/ubuntu|amazon-keyword-rank-monitor-dev|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|9226' agent src config docs tests; then
             echo "A forbidden private identifier or private-key marker was found."
             exit 1
           fi
