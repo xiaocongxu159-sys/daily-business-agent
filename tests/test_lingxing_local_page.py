@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from agent import lingxing_integration
 from agent.lingxing_integration import create_integrated_app
 from agent.lingxing_secure_store import LingxingCredentials, TestOnlyProtector
 from agent.settings import AgentSettings
@@ -36,10 +37,25 @@ def build_app(root: Path):
     )
 
 
-def test_lingxing_page_loads(tmp_path: Path) -> None:
-    with TestClient(build_app(tmp_path), base_url="http://127.0.0.1:8766") as client:
+def test_lingxing_static_file_exists() -> None:
+    path = Path(lingxing_integration.__file__).resolve().parent / "static" / "lingxing.html"
+    assert path.is_file()
+    assert "领星自动同步" in path.read_text(encoding="utf-8")
+
+
+def test_lingxing_route_returns_success(tmp_path: Path) -> None:
+    with TestClient(
+        build_app(tmp_path),
+        base_url="http://127.0.0.1:8766",
+        raise_server_exceptions=False,
+    ) as client:
         page = client.get("/lingxing")
         assert page.status_code == 200
+
+
+def test_lingxing_page_contains_title(tmp_path: Path) -> None:
+    with TestClient(build_app(tmp_path), base_url="http://127.0.0.1:8766") as client:
+        page = client.get("/lingxing")
         assert "领星自动同步" in page.text
 
 
