@@ -23,7 +23,7 @@ permissions:
 jobs:
   chromium-local-pages:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,7 +41,11 @@ jobs:
         run: python tests/browser_public_pages.py --check report-page
       - name: Check report analysis in Chromium
         run: python tests/browser_public_pages.py --check report-analysis
-      - name: Check report dashboard in Chromium
-        run: python tests/browser_public_pages.py --check report-dashboard
+      - name: Check dashboard link in Chromium
+        run: python tests/browser_public_pages.py --check dashboard-link
+      - name: Check dashboard loading in Chromium
+        run: python tests/browser_public_pages.py --check dashboard-load
+      - name: Check dashboard content in Chromium
+        run: python tests/browser_public_pages.py --check dashboard-content
       - name: Check Lingxing page in Chromium
         run: python tests/browser_public_pages.py --check lingxing
