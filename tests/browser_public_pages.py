@@ -99,10 +99,22 @@ def _watch_network(context: BrowserContext) -> list[str]:
     return external
 
 
-def _check_report_page(page: Page, inputs: dict[str, Path]) -> None:
-    page.goto(BASE_URL, wait_until="domcontentloaded")
+def _open_report_page(page: Page) -> None:
+    response = page.goto(BASE_URL, wait_until="domcontentloaded")
+    if response is None or response.status != 200:
+        raise AssertionError(
+            f"report page returned {None if response is None else response.status}"
+        )
     expect(page).to_have_title("每日经营数据分析")
     expect(page.locator(".notice")).to_contain_text("只在你电脑")
+    expect(page.locator("#start-analysis")).to_be_visible()
+    expect(page.locator("#input-mapping")).to_be_attached()
+    expect(page.locator("#input-business")).to_be_attached()
+    expect(page.locator("#input-advertising")).to_be_attached()
+
+
+def _run_report_analysis(page: Page, inputs: dict[str, Path]) -> None:
+    _open_report_page(page)
     page.locator("#input-mapping").set_input_files(str(inputs["mapping"]))
     page.locator("#input-business").set_input_files(str(inputs["business"]))
     page.locator("#input-advertising").set_input_files(str(inputs["advertising"]))
@@ -112,7 +124,14 @@ def _check_report_page(page: Page, inputs: dict[str, Path]) -> None:
     expect(page.locator("#job-step")).to_contain_text("分析完成")
     expect(page.get_by_role("link", name="打开经营看板")).to_be_visible()
     expect(page.get_by_role("link", name="下载完整 Excel")).to_be_visible()
+    if page.locator("#message").get_attribute("class") == "error":
+        raise AssertionError(
+            "report page showed an error: " + page.locator("#message").inner_text()
+        )
 
+
+def _open_report_dashboard(page: Page, inputs: dict[str, Path]) -> None:
+    _run_report_analysis(page, inputs)
     with page.expect_popup() as popup_info:
         page.get_by_role("link", name="打开经营看板").click()
     dashboard = popup_info.value
@@ -170,8 +189,13 @@ def _run_check(check: str) -> None:
                 context = browser.new_context(accept_downloads=True)
                 external = _watch_network(context)
                 page = context.new_page()
-                if check == "report":
-                    _check_report_page(page, _write_synthetic_inputs(root / "inputs"))
+                inputs = _write_synthetic_inputs(root / "inputs")
+                if check == "report-page":
+                    _open_report_page(page)
+                elif check == "report-analysis":
+                    _run_report_analysis(page, inputs)
+                elif check == "report-dashboard":
+                    _open_report_dashboard(page, inputs)
                 elif check == "lingxing":
                     _check_lingxing_page(page)
                 else:
@@ -191,7 +215,11 @@ def _run_check(check: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--check", choices=("report", "lingxing"), required=True)
+    parser.add_argument(
+        "--check",
+        choices=("report-page", "report-analysis", "report-dashboard", "lingxing"),
+        required=True,
+    )
     args = parser.parse_args()
     _run_check(args.check)
     print(f"browser acceptance passed: {args.check}, local-only network")
