@@ -1,0 +1,40 @@
+name: Browser UX
+
+on:
+  pull_request:
+    paths:
+      - "agent/**"
+      - "src/**"
+      - "tests/browser_public_pages.py"
+      - "requirements*.txt"
+      - ".github/workflows/browser-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "agent/**"
+      - "src/**"
+      - "tests/browser_public_pages.py"
+      - "requirements*.txt"
+      - ".github/workflows/browser-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  chromium-local-pages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Agent and browser dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          -r requirements-agent.txt
+          playwright==1.55.0
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Run real Chromium acceptance
+        run: python tests/browser_public_pages.py
