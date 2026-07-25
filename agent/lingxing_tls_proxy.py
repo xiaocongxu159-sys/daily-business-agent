@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import select
 import socket
 import ssl
 import threading
@@ -168,7 +169,6 @@ class TlsProxyBridge:
     def _handle_client(self, client: socket.socket) -> None:
         remote: socket.socket | None = None
         tls_socket: ssl.SSLSocket | None = None
-        done = threading.Event()
         try:
             remote = socket.create_connection((self.target.host, self.target.port), timeout=15)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -180,23 +180,12 @@ class TlsProxyBridge:
             actual = hashlib.sha256(certificate or b"").hexdigest()
             if not hmac.compare_digest(actual, self.target.certificate_sha256):
                 raise ssl.SSLError("固定出口 TLS 证书指纹不匹配")
-            client.settimeout(1.0)
-            tls_socket.settimeout(1.0)
             with self._lock:
                 self._active_sockets.update({client, tls_socket})
-            upstream = threading.Thread(
-                target=self._pump,
-                args=(client, tls_socket, done),
-                name="lingxing-tls-proxy-upstream",
-                daemon=True,
-            )
-            upstream.start()
-            self._pump(tls_socket, client, done)
-            upstream.join(timeout=2)
+            self._relay_bidirectional(client, tls_socket)
         except Exception as exc:  # noqa: BLE001
             self.last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
         finally:
-            done.set()
             with self._lock:
                 self._active_sockets.discard(client)
                 if tls_socket is not None:
@@ -208,24 +197,61 @@ class TlsProxyBridge:
                     except OSError:
                         pass
 
-    def _pump(self, source: socket.socket, destination: socket.socket, done: threading.Event) -> None:
-        try:
-            while not self._stop.is_set() and not done.is_set():
+    def _relay_bidirectional(self, client: socket.socket, tls_socket: ssl.SSLSocket) -> None:
+        """Relay both directions in one thread to avoid concurrent SSLSocket access."""
+        client.setblocking(False)
+        tls_socket.setblocking(False)
+        peers = {client: tls_socket, tls_socket: client}
+        pending = {client: bytearray(), tls_socket: bytearray()}
+        read_open = {client, tls_socket}
+        close_after_flush: set[socket.socket] = set()
+        max_pending = 1024 * 1024
+
+        while not self._stop.is_set():
+            if not read_open and not any(pending.values()):
+                return
+            read_list = [
+                source for source in read_open
+                if len(pending[peers[source]]) < max_pending
+            ]
+            write_list = [destination for destination, data in pending.items() if data]
+            try:
+                readable, writable, _ = select.select(read_list, write_list, [], 0.5)
+            except (OSError, ValueError):
+                return
+
+            for source in readable:
                 try:
                     chunk = source.recv(64 * 1024)
-                except socket.timeout:
+                except (BlockingIOError, ssl.SSLWantReadError, ssl.SSLWantWriteError):
                     continue
+                except (OSError, ssl.SSLError):
+                    return
                 if not chunk:
-                    break
-                destination.sendall(chunk)
-        except (OSError, ssl.SSLError):
-            pass
-        finally:
-            done.set()
-            try:
-                destination.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
+                    read_open.discard(source)
+                    close_after_flush.add(peers[source])
+                    continue
+                pending[peers[source]].extend(chunk)
+
+            for destination in writable:
+                data = pending[destination]
+                if not data:
+                    continue
+                try:
+                    sent = destination.send(data)
+                except (BlockingIOError, ssl.SSLWantReadError, ssl.SSLWantWriteError):
+                    continue
+                except (OSError, ssl.SSLError):
+                    return
+                if sent <= 0:
+                    return
+                del data[:sent]
+                if not data and destination in close_after_flush:
+                    close_after_flush.discard(destination)
+                    try:
+                        destination.shutdown(socket.SHUT_WR)
+                    except OSError:
+                        pass
 
 
 @contextmanager
