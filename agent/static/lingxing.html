@@ -1,14 +1,28 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>领星自动同步 · 每日经营数据</title>
   <style>
-    :root{color-scheme:light;font-family:Inter,"Microsoft YaHei",sans-serif;--blue:#1d4ed8;--ink:#172033;--muted:#64748b;--line:#dfe5ee;--bg:#f4f6f9}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink)}main{width:min(1080px,calc(100% - 32px));margin:28px auto 60px}h1{margin:0 0 7px;font-size:30px}h2{margin:0 0 14px;font-size:20px}p{line-height:1.65}.sub,.muted{color:var(--muted)}.card{margin-top:14px;padding:18px;border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.05)}.notice{padding:12px 14px;border:1px solid #9ee7c1;border-radius:10px;background:#ecfdf5}.status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.metric{padding:13px;border:1px solid #e5eaf0;border-radius:10px;background:#fafcff}.metric span{display:block;color:var(--muted);font-size:12px}.metric strong{display:block;margin-top:7px;font-size:17px;word-break:break-word}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}button,a.button{min-height:42px;border:0;border-radius:8px;padding:10px 16px;cursor:pointer;background:var(--blue);color:#fff;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}button.secondary,a.secondary{background:#475569}button.light,a.light{border:1px solid #bfd0e5;background:#eff6ff;color:#1e4e87}button.danger{background:#b91c1c}button:disabled{opacity:.5;cursor:not-allowed}details{margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:0 14px}summary{min-height:48px;display:flex;align-items:center;cursor:pointer;color:#315b86;font-weight:700}form{padding:4px 0 16px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}label{display:flex;flex-direction:column;gap:7px;color:#475569;font-size:13px;font-weight:600}input{width:100%;min-height:42px;padding:9px 10px;border:1px solid #cbd5e1;border-radius:8px}label.check{flex-direction:row;align-items:center}label.check input{width:auto;min-height:0}#message{margin-top:12px;white-space:pre-wrap}#message.error{color:#b91c1c}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;background:#e2e8f0;font-weight:700}.pill.success{background:#dcfce7;color:#166534}.pill.syncing{background:#dbeafe;color:#1e40af}.pill.failed{background:#fee2e2;color:#991b1b}@media(max-width:720px){.form-grid{grid-template-columns:1fr}}
+    :root{color-scheme:light;font-family:Inter,"Microsoft YaHei",sans-serif;--blue:#1d4ed8;--ink:#172033;--muted:#64748b;--line:#dfe5ee;--bg:#f4f6f9}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink)}main{width:min(1080px,calc(100% - 32px));margin:28px auto 60px}
+    h1{margin:0 0 7px;font-size:30px}h2{margin:0 0 14px;font-size:20px}p{line-height:1.65}.sub,.muted{color:var(--muted)}
+    .card{margin-top:14px;padding:18px;border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.05)}
+    .notice{padding:12px 14px;border:1px solid #9ee7c1;border-radius:10px;background:#ecfdf5}.admin-note{padding:12px 14px;border:1px solid #f3cf88;border-radius:10px;background:#fff8e8;color:#6b4b14}.field-note{margin:0;color:var(--muted);font-size:12px;font-weight:400;line-height:1.55}
+    .status-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.metric{padding:13px;border:1px solid #e5eaf0;border-radius:10px;background:#fafcff}.metric span{display:block;color:var(--muted);font-size:12px}.metric strong{display:block;margin-top:7px;font-size:17px;word-break:break-word}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}button,a.button{min-height:42px;border:0;border-radius:8px;padding:10px 16px;cursor:pointer;background:var(--blue);color:#fff;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}button.secondary,a.secondary{background:#475569}button.light,a.light{border:1px solid #bfd0e5;background:#eff6ff;color:#1e4e87}button.danger{background:#b91c1c}button:disabled{opacity:.5;cursor:not-allowed}
+    details{margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:0 14px}summary{min-height:48px;display:flex;align-items:center;cursor:pointer;color:#315b86;font-weight:700}details.admin-settings{background:#fafcff;border-style:dashed}details.admin-settings summary{color:#7c5a18}
+    form{padding:4px 0 16px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}label{display:flex;flex-direction:column;gap:7px;color:#475569;font-size:13px;font-weight:600}input{width:100%;min-height:42px;padding:9px 10px;border:1px solid #cbd5e1;border-radius:8px}label.check{flex-direction:row;align-items:center}label.check input{width:auto;min-height:0}
+    #message{margin-top:12px;white-space:pre-wrap}#message.error{color:#b91c1c}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{padding:10px 8px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px}.pill{display:inline-block;border-radius:999px;padding:4px 10px;background:#e2e8f0;font-weight:700}.pill.success{background:#dcfce7;color:#166534}.pill.syncing{background:#dbeafe;color:#1e40af}.pill.failed{background:#fee2e2;color:#991b1b}
+    @media(max-width:720px){.form-grid{grid-template-columns:1fr}}
   </style>
-</head><body><main>
-  <h1>领星自动同步</h1><p class="sub">打开软件立即显示本机上次成功数据，同时后台检查领星最新店铺信息。</p>
+</head>
+<body><main>
+  <h1>领星自动同步</h1>
+  <p class="sub">打开软件立即显示本机上次成功数据，同时后台检查领星最新店铺信息。</p>
   <div class="notice"><strong>数据只保存在这台电脑。</strong> AppID、AppSecret 和固定出口凭据使用 Windows 当前用户加密；Agent 到固定出口使用证书指纹锁定的外层 TLS，领星 API HTTPS 仍保持端到端加密。服务器不保存领星响应和经营数据。</div>
+
   <section class="card"><h2>同步状态</h2><div class="status-grid">
     <div class="metric"><span>连接状态</span><strong><span id="status-pill" class="pill">读取中</span></strong></div>
     <div class="metric"><span>店铺数量</span><strong id="shops-count">-</strong></div>
@@ -17,16 +31,43 @@
   </div><p id="status-message" class="muted">正在读取本机缓存……</p><div class="actions">
     <button id="sync-now">立即同步</button><a class="button secondary" href="/">手工报表分析</a><button id="show-config" class="light">连接设置</button>
   </div><div id="message"></div></section>
+
   <section class="card"><h2>本机店铺列表</h2><p class="muted">页面先显示上次成功结果；后台更新失败时不会清空旧数据。</p><div id="shops"><p class="muted">暂无本地店铺数据。</p></div></section>
-  <details id="config-panel" class="card"><summary>企业管理员配置领星连接</summary><form id="config-form">
-    <p class="muted">AppID、AppSecret、代理用户名和密码只保存在本机加密文件中。远程固定出口必须使用 tls+http 地址，并包含服务器证书 SHA256 指纹。</p>
-    <div class="form-grid"><label>AppID<input id="app-id" autocomplete="off" required placeholder="领星开放平台 AppID"></label>
-    <label>AppSecret<input id="app-secret" type="password" autocomplete="new-password" required placeholder="保存后不会回显"></label>
-    <label style="grid-column:1/-1">固定出口 TLS 地址<input id="proxy-url" type="password" autocomplete="new-password" required placeholder="tls+http://用户名:密码@服务器:端口?sha256=证书指纹"></label>
-    <label>自动同步间隔（分钟）<input id="sync-interval" type="number" min="30" max="1440" value="120"></label>
-    <label class="check"><input id="auto-sync" type="checkbox" checked> Windows 登录和打开软件时自动检查</label></div>
+
+  <details id="config-panel" class="card"><summary>连接领星（普通用户）</summary><form id="config-form">
+    <p><strong>普通用户只需要准备自己的领星 AppID 和 AppSecret。</strong></p>
+    <p class="muted">固定出口服务器、代理账号和证书指纹属于企业管理员参数，无法从领星后台或 Windows 设置中找到。没有这些参数时，请联系企业管理员；不要自行编写。未配置领星也不影响手工报表分析。</p>
+    <div class="form-grid">
+      <label>AppID<input id="app-id" autocomplete="off" required placeholder="领星开放平台 AppID"></label>
+      <label>AppSecret<input id="app-secret" type="password" autocomplete="new-password" required placeholder="保存后不会回显"></label>
+      <label>自动同步间隔（分钟）<input id="sync-interval" type="number" min="30" max="1440" value="120"></label>
+      <label class="check"><input id="auto-sync" type="checkbox" checked> Windows 登录和打开软件时自动检查</label>
+    </div>
+
+    <details id="admin-settings" class="admin-settings">
+      <summary>管理员高级设置（普通用户无需填写）</summary>
+      <div class="admin-note"><strong>这不是领星账号信息。</strong> 以下安全连接地址应由负责固定出口服务器的管理员提供。请勿把完整地址、密码或证书指纹发到聊天、截图或公开 Issue。</div>
+      <label style="margin-top:12px">固定出口安全连接
+        <input id="proxy-url" type="password" autocomplete="new-password" placeholder="由企业管理员提供；普通用户不要自行拼接">
+        <span class="field-note">管理员格式：tls+http://用户名:密码@服务器:端口?sha256=64位证书指纹</span>
+      </label>
+    </details>
+
     <div class="actions"><button type="submit">测试连接并安全保存</button><button id="disconnect" class="danger" type="button">断开连接</button></div>
   </form></details>
-</main><script>
-const $=id=>document.getElementById(id);let pollTimer=null;function escapeHtml(value){return String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char])}async function api(path,options={}){const response=await fetch(path,options);const type=response.headers.get("content-type")||"";const body=type.includes("application/json")?await response.json():await response.text();if(!response.ok)throw new Error(body?.detail||String(body||response.statusText));return body}function showMessage(text,error=false){$("message").textContent=text||"";$("message").className=error?"error":""}function formatTime(value){if(!value)return"-";const date=new Date(value);return Number.isNaN(date.getTime())?value:date.toLocaleString()}function renderShops(shops){if(!shops?.length){$("shops").innerHTML='<p class="muted">暂无本地店铺数据。配置连接后会自动获取。</p>';return}$("shops").innerHTML=`<table><thead><tr><th>店铺</th><th>国家/区域</th><th>Seller ID</th><th>状态</th><th>广告授权</th></tr></thead><tbody>${shops.map(shop=>`<tr><td>${escapeHtml(shop.seller_name)}</td><td>${escapeHtml(shop.country||shop.region)}</td><td>${escapeHtml(shop.seller_id)}</td><td>${escapeHtml(shop.status)}</td><td>${shop.ads_authorized?"是":"否"}</td></tr>`).join("")}</tbody></table>`}function renderStatus(state){const status=state.running?"syncing":(state.status||"not_configured");const labels={not_configured:"未配置",disconnected:"已断开",success:"已是最新",syncing:"正在更新",failed:"更新失败",state_error:"状态异常"};const pill=$("status-pill");pill.textContent=labels[status]||status;pill.className=`pill ${status}`;$("shops-count").textContent=state.shops_count??state.shops?.length??0;$("last-success").textContent=formatTime(state.last_success_at);$("status-message").textContent=state.message||"";$("sync-now").disabled=!state.configured||state.running;$("disconnect").disabled=!state.configured;renderShops(state.shops||[]);if(state.running){if(!pollTimer)pollTimer=setInterval(loadStatus,1000)}else if(pollTimer){clearInterval(pollTimer);pollTimer=null}}async function loadStatus(){try{renderStatus(await api("/v1/lingxing/status"))}catch(error){showMessage(error.message,true)}}$("sync-now").addEventListener("click",async()=>{showMessage("");try{const result=await api("/v1/lingxing/sync",{method:"POST"});renderStatus(result.state);showMessage(result.message);await loadStatus()}catch(error){showMessage(error.message,true)}});$("show-config").addEventListener("click",()=>{$("config-panel").open=true;$("config-panel").scrollIntoView({behavior:"smooth",block:"start"})});$("config-form").addEventListener("submit",async event=>{event.preventDefault();showMessage("正在通过固定出口 TLS 测试连接，请稍候……");try{const state=await api("/v1/lingxing/configure",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({app_id:$("app-id").value.trim(),app_secret:$("app-secret").value,proxy_url:$("proxy-url").value.trim(),auto_sync:$("auto-sync").checked,sync_interval_minutes:Number($("sync-interval").value)})});$("app-secret").value="";$("proxy-url").value="";renderStatus(state);showMessage("连接成功。密钥和固定出口凭据已使用 Windows 当前用户加密保存，本页不会回显。");$("config-panel").open=false}catch(error){showMessage(error.message,true)}});$("disconnect").addEventListener("click",async()=>{if(!confirm("断开连接后停止自动同步，但保留本机历史店铺数据。确认继续？"))return;try{renderStatus(await api("/v1/lingxing/config",{method:"DELETE"}));showMessage("领星连接已断开，本机历史数据仍保留。")}catch(error){showMessage(error.message,true)}});loadStatus();setInterval(()=>{if(!pollTimer)loadStatus()},30000);
+</main>
+<script>
+const $=id=>document.getElementById(id);let pollTimer=null;
+function escapeHtml(value){return String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char])}
+async function api(path,options={}){const response=await fetch(path,options);const type=response.headers.get("content-type")||"";const body=type.includes("application/json")?await response.json():await response.text();if(!response.ok)throw new Error(body?.detail||String(body||response.statusText));return body}
+function showMessage(text,error=false){$("message").textContent=text||"";$("message").className=error?"error":""}
+function formatTime(value){if(!value)return"-";const date=new Date(value);return Number.isNaN(date.getTime())?value:date.toLocaleString()}
+function renderShops(shops){if(!shops?.length){$("shops").innerHTML='<p class="muted">暂无本地店铺数据。配置连接后会自动获取。</p>';return}$("shops").innerHTML=`<table><thead><tr><th>店铺</th><th>国家/区域</th><th>Seller ID</th><th>状态</th><th>广告授权</th></tr></thead><tbody>${shops.map(shop=>`<tr><td>${escapeHtml(shop.seller_name)}</td><td>${escapeHtml(shop.country||shop.region)}</td><td>${escapeHtml(shop.seller_id)}</td><td>${escapeHtml(shop.status)}</td><td>${shop.ads_authorized?"是":"否"}</td></tr>`).join("")}</tbody></table>`}
+function renderStatus(state){const status=state.running?"syncing":(state.status||"not_configured");const labels={not_configured:"未配置",disconnected:"已断开",success:"已是最新",syncing:"正在更新",failed:"更新失败",state_error:"状态异常"};const pill=$("status-pill");pill.textContent=labels[status]||status;pill.className=`pill ${status}`;$("shops-count").textContent=state.shops_count??state.shops?.length??0;$("last-success").textContent=formatTime(state.last_success_at);$("status-message").textContent=state.message||"";$("sync-now").disabled=!state.configured||state.running;$("disconnect").disabled=!state.configured;renderShops(state.shops||[]);if(state.running){if(!pollTimer)pollTimer=setInterval(loadStatus,1000)}else if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
+async function loadStatus(){try{renderStatus(await api("/v1/lingxing/status"))}catch(error){showMessage(error.message,true)}}
+$("sync-now").addEventListener("click",async()=>{showMessage("");try{const result=await api("/v1/lingxing/sync",{method:"POST"});renderStatus(result.state);showMessage(result.message);await loadStatus()}catch(error){showMessage(error.message,true)}});
+$("show-config").addEventListener("click",()=>{$("config-panel").open=true;$("config-panel").scrollIntoView({behavior:"smooth",block:"start"})});
+$("config-form").addEventListener("submit",async event=>{event.preventDefault();const proxyUrl=$("proxy-url").value.trim();if(!proxyUrl){$("admin-settings").open=true;showMessage("尚未配置企业管理员固定出口。请联系管理员提供安全连接参数；不要自行编写服务器地址、用户名、密码或证书指纹。",true);$("proxy-url").focus();return}showMessage("正在通过企业固定出口测试连接，请稍候……");try{const state=await api("/v1/lingxing/configure",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({app_id:$("app-id").value.trim(),app_secret:$("app-secret").value,proxy_url:proxyUrl,auto_sync:$("auto-sync").checked,sync_interval_minutes:Number($("sync-interval").value)})});$("app-secret").value="";$("proxy-url").value="";renderStatus(state);showMessage("连接成功。密钥和企业固定出口凭据已使用 Windows 当前用户加密保存，本页不会回显。");$("config-panel").open=false;$("admin-settings").open=false}catch(error){showMessage(error.message,true)}});
+$("disconnect").addEventListener("click",async()=>{if(!confirm("断开连接后停止自动同步，但保留本机历史店铺数据。确认继续？"))return;try{renderStatus(await api("/v1/lingxing/config",{method:"DELETE"}));showMessage("领星连接已断开，本机历史数据仍保留。")}catch(error){showMessage(error.message,true)}});
+loadStatus();setInterval(()=>{if(!pollTimer)loadStatus()},30000);
 </script></body></html>
