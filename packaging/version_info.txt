@@ -1,0 +1,30 @@
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(0, 1, 0, 0),
+    prodvers=(0, 1, 0, 0),
+    mask=0x3F,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0),
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'080404B0',
+        [
+          StringStruct(u'CompanyName', u'xiaocongxu159-sys'),
+          StringStruct(u'FileDescription', u'每日经营数据本地助手'),
+          StringStruct(u'FileVersion', u'0.1.0'),
+          StringStruct(u'InternalName', u'DailyBusinessAgent'),
+          StringStruct(u'LegalCopyright', u'Copyright © 2026 xiaocongxu159-sys'),
+          StringStruct(u'OriginalFilename', u'DailyBusinessAgent.exe'),
+          StringStruct(u'ProductName', u'每日经营数据本地助手'),
+          StringStruct(u'ProductVersion', u'0.1.0'),
+        ],
+      )
+    ]),
+    VarFileInfo([VarStruct(u'Translation', [2052, 1200])]),
+  ],
+)
