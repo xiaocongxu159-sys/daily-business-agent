@@ -31,13 +31,13 @@ class FakeProvider:
         }]
 
 
-def test_settings(root: Path) -> AgentSettings:
+def make_settings(root: Path) -> AgentSettings:
     return AgentSettings(data_root=root, allowed_origins=())
 
 
 def build_app(root: Path):
     return create_integrated_app(
-        test_settings(root),
+        make_settings(root),
         token="synthetic-test-token",
         provider_factory=FakeProvider,
         protector=TestOnlyProtector(),
@@ -56,7 +56,7 @@ def test_lingxing_static_file_exists() -> None:
 
 
 def test_base_agent_app_builds(tmp_path: Path) -> None:
-    app = create_app(test_settings(tmp_path), token="synthetic-test-token")
+    app = create_app(make_settings(tmp_path), token="synthetic-test-token")
     assert isinstance(app, FastAPI)
     assert hasattr(app.state, "sessions")
 
@@ -69,7 +69,7 @@ def test_lingxing_service_builds(tmp_path: Path) -> None:
 
 
 def test_attach_lingxing_returns_same_app(tmp_path: Path) -> None:
-    app = create_app(test_settings(tmp_path), token="synthetic-test-token")
+    app = create_app(make_settings(tmp_path), token="synthetic-test-token")
     attached = attach_lingxing(
         app,
         provider_factory=FakeProvider,
