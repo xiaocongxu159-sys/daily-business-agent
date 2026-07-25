@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.lock
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-test.lock
+      - name: Compile
+        run: python -m compileall -q agent tests scripts
+      - name: Unit and TLS bridge tests
+        run: python -B -m unittest discover -s tests -p "test_*.py"
+      - name: Public boundary scan
+        run: python scripts/public_boundary_scan.py
+
+  windows-installer:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-build.lock
+      - name: Ensure Inno Setup
+        shell: pwsh
+        run: |
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 7\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          )
+          if (-not ($candidates | Where-Object { Test-Path $_ } | Select-Object -First 1)) {
+            choco install innosetup --no-progress -y
+          }
+      - name: Build installer
+        shell: pwsh
+        run: .\packaging\build_installer.ps1
+      - name: Install and verify loopback, package UI, startup and data retention
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw "VERSION").Trim()
+          $setup = (Resolve-Path "release\DailyBusinessAgent-Setup-$version.exe").Path
+          $installDir = Join-Path $env:RUNNER_TEMP "DailyBusinessAgentApp"
+          $dataDir = Join-Path $env:RUNNER_TEMP "DailyBusinessAgentData"
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          Set-Content (Join-Path $dataDir "preserve-me.txt") "keep"
+          $install = Start-Process $setup -ArgumentList @("/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-","/DIR=$installDir","/TASKS=autostart") -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "installer failed: $($install.ExitCode)" }
+          $exe = Join-Path $installDir "DailyBusinessAgent.exe"
+          if (-not (Test-Path $exe)) { throw "installed executable missing" }
+          $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\每日经营数据本地助手 后台同步.lnk"
+          if (-not (Test-Path $startup)) { throw "startup shortcut missing" }
+          $agent = Start-Process $exe -ArgumentList @("--no-browser","--data-root",$dataDir) -PassThru
+          try {
+            $health = $null
+            foreach ($attempt in 1..60) {
+              try {
+                $health = Invoke-RestMethod "http://127.0.0.1:8766/health" -TimeoutSec 2
+                if ($health.status -eq "ok") { break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $health -or $health.bind -ne "127.0.0.1:8766" -or $health.version -ne $version) { throw "loopback health failed" }
+            $page = Invoke-WebRequest "http://127.0.0.1:8766/lingxing" -UseBasicParsing -TimeoutSec 5
+            if ($page.Content -notmatch 'id="connection-package"') { throw "package input missing" }
+            if ($page.Content -match 'id="proxy-url"') { throw "manual proxy input must not ship" }
+            $listeners = Get-NetTCPConnection -State Listen -LocalPort 8766
+            if ($listeners.LocalAddress | Where-Object { $_ -notin @("127.0.0.1","::1") }) { throw "non-loopback listener detected" }
+          } finally {
+            Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue
+          }
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          $uninstall = Start-Process $uninstaller -ArgumentList @("/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART") -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "uninstaller failed" }
+          if (-not (Test-Path (Join-Path $dataDir "preserve-me.txt"))) { throw "user data deleted" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DailyBusinessAgent-Windows-${{ github.sha }}
+          path: |
+            release/DailyBusinessAgent-Setup-*.exe
+            release/DailyBusinessAgent-Setup-*.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
