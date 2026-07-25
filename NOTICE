@@ -2,4 +2,7 @@ Daily Business Agent
 Copyright 2026 xiaocongxu159-sys
 
 This product is licensed under the Apache License, Version 2.0.
-Third-party attribution notices will be added here when applicable.
+
+This product includes or depends on third-party open-source software distributed under its own license terms. A curated dependency and license index is provided in THIRD_PARTY_LICENSES.md. Each Windows candidate build also generates THIRD_PARTY_LICENSES.generated.md with the exact resolved build environment and uploads it with the installer artifact.
+
+Third-party names and marks belong to their respective owners. Inclusion of a component does not imply endorsement by its authors.
