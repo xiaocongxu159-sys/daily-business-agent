@@ -40,14 +40,23 @@ def _open_lingxing(page: Page) -> None:
     expect(page.locator(".notice")).to_contain_text("数据只保存在这台电脑")
     expect(page.locator("#show-config")).to_be_visible()
     expect(page.locator("#config-panel")).to_be_attached()
+    expect(page.locator("#admin-settings")).to_be_attached()
+    expect(page.locator("#admin-settings")).not_to_have_attribute("open", "")
 
 
 def _configure(page: Page) -> None:
     _open_lingxing(page)
     page.locator("#show-config").click()
     expect(page.locator("#config-panel")).to_have_attribute("open", "")
+    expect(page.locator("#config-panel")).to_contain_text("普通用户只需要准备自己的领星 AppID 和 AppSecret")
+    expect(page.locator("#config-panel")).to_contain_text("请联系企业管理员")
     page.locator("#app-id").fill("synthetic-browser-app")
     page.locator("#app-secret").fill("synthetic-browser-secret")
+
+    page.locator("#config-form button[type=submit]").click()
+    expect(page.locator("#message")).to_contain_text("尚未配置企业管理员固定出口")
+    expect(page.locator("#admin-settings")).to_have_attribute("open", "")
+
     page.locator("#proxy-url").fill("http://127.0.0.1:18080")
     page.locator("#auto-sync").uncheck()
     page.locator("#config-form button[type=submit]").click()
