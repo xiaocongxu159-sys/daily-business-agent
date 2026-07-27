@@ -36,6 +36,10 @@ VersionInfoProductName={#MyAppName}
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加选项："; Flags: unchecked
 Name: "autostart"; Description: "Windows 登录后自动启动并检查领星更新"; GroupDescription: "自动同步："; Flags: checkedonce
 
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\{#MyAppExeName}"
+
 [Files]
 Source: "..\dist\DailyBusinessAgent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -57,4 +61,21 @@ Filename: "{app}\{#MyAppExeName}"; Description: "安装完成后启动本地助�
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#MyAppExeName} /F >NUL 2>&1"; Flags: runhidden; RunOnceId: "StopAgent"
 
-; 用户数据保存在 %LOCALAPPDATA%\CTJFyrdian\DailyBusinessAgent，卸载程序不会删除。
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec(
+    ExpandConstant('{cmd}'),
+    '/C taskkill /IM {#MyAppExeName} /F >NUL 2>&1',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  );
+  Sleep(1200);
+  Result := '';
+end;
+
+; 用户数据保存在 %LOCALAPPDATA%\CTJFyrdian\DailyBusinessAgent，升级和卸载都不会删除。
