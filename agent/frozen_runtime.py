@@ -123,17 +123,26 @@ def install_frozen_runtime_patches() -> None:
     app_module._frozen_runtime_patched = True
 
 
+def _write_verification_progress(workspace: Path, stage: str) -> None:
+    (workspace / "verification-progress.txt").write_text(stage + "\n", encoding="utf-8")
+
+
 def verify_local_analysis_runtime(workspace: Path) -> dict[str, str]:
     """Generate synthetic inputs and prove the frozen engine writes all outputs."""
-    import pandas as pd
-
-    from src.local_engine import LocalEngineRequest, run_local_engine
-
     workspace = Path(workspace).expanduser().resolve()
     workspace.mkdir(parents=True, exist_ok=True)
+    _write_verification_progress(workspace, "start")
+
+    _write_verification_progress(workspace, "importing-pandas")
+    import pandas as pd
+
+    _write_verification_progress(workspace, "importing-local-engine")
+    from src.local_engine import LocalEngineRequest, run_local_engine
+
     input_dir = workspace / "input"
     input_dir.mkdir(parents=True, exist_ok=True)
 
+    _write_verification_progress(workspace, "writing-mapping")
     mapping = input_dir / "mapping.csv"
     with mapping.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle)
@@ -160,6 +169,7 @@ def verify_local_analysis_runtime(workspace: Path) -> dict[str, str]:
             ]
         )
 
+    _write_verification_progress(workspace, "writing-erp-xlsx")
     erp = input_dir / "product-performance.xlsx"
     pd.DataFrame(
         [
@@ -181,6 +191,7 @@ def verify_local_analysis_runtime(workspace: Path) -> dict[str, str]:
         ]
     ).to_excel(erp, sheet_name="sheet1", index=False)
 
+    _write_verification_progress(workspace, "running-local-engine")
     result = run_local_engine(
         LocalEngineRequest(
             workspace=workspace,
@@ -191,6 +202,8 @@ def verify_local_analysis_runtime(workspace: Path) -> dict[str, str]:
             write_html=True,
         )
     )
+    _write_verification_progress(workspace, "local-engine-returned")
+
     paths = {
         "excel": str(Path(result.output_excel).resolve()),
         "html": str(Path(result.dashboard_html).resolve()),
@@ -204,4 +217,5 @@ def verify_local_analysis_runtime(workspace: Path) -> dict[str, str]:
         json.dumps({"status": result.status, **paths}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    _write_verification_progress(workspace, "complete")
     return paths
