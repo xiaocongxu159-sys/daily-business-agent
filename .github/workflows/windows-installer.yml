@@ -72,22 +72,6 @@ jobs:
         run: |
           $diagnostic = Join-Path $env:RUNNER_TEMP "windows-verification-error.txt"
           Remove-Item -LiteralPath $diagnostic -Force -ErrorAction SilentlyContinue
-
-          $verificationScript = ".\scripts\verify_windows_installer.ps1"
-          $scriptContent = Get-Content -LiteralPath $verificationScript -Raw
-          $replacements = [ordered]@{
-            '$property = $row.PSObject.Properties[$Name]' = '$value = $row.$Name'
-            'if ($null -ne $property -and $null -ne $property.Value -and [string]$property.Value -ne "") {' = 'if ($null -ne $value -and [string]$value -ne "") {'
-            '$total += [double]$property.Value' = '$total += [double]$value'
-          }
-          foreach ($entry in $replacements.GetEnumerator()) {
-            if (-not $scriptContent.Contains($entry.Key)) {
-              throw "expected PowerShell metric statement was not found"
-            }
-            $scriptContent = $scriptContent.Replace($entry.Key, $entry.Value)
-          }
-          $scriptContent | Set-Content -LiteralPath $verificationScript -Encoding utf8
-
           $sameOriginHeaders = @{
             Origin = "http://127.0.0.1:8766"
             Referer = "http://127.0.0.1:8766/"
