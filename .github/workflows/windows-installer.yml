@@ -75,23 +75,18 @@ jobs:
 
           $verificationScript = ".\scripts\verify_windows_installer.ps1"
           $scriptContent = Get-Content -LiteralPath $verificationScript -Raw
-          $oldMetricBlock = @'
-    $property = $row.PSObject.Properties[$Name]
-    if ($null -ne $property -and $null -ne $property.Value -and [string]$property.Value -ne "") {
-      $total += [double]$property.Value
-    }
-'@
-          $newMetricBlock = @'
-    $value = $row.$Name
-    if ($null -ne $value -and [string]$value -ne "") {
-      $total += [double]$value
-    }
-'@
-          if (-not $scriptContent.Contains($oldMetricBlock)) {
-            throw "expected PowerShell metric block was not found"
+          $replacements = [ordered]@{
+            '$property = $row.PSObject.Properties[$Name]' = '$value = $row.$Name'
+            'if ($null -ne $property -and $null -ne $property.Value -and [string]$property.Value -ne "") {' = 'if ($null -ne $value -and [string]$value -ne "") {'
+            '$total += [double]$property.Value' = '$total += [double]$value'
           }
-          $scriptContent.Replace($oldMetricBlock, $newMetricBlock) |
-            Set-Content -LiteralPath $verificationScript -Encoding utf8
+          foreach ($entry in $replacements.GetEnumerator()) {
+            if (-not $scriptContent.Contains($entry.Key)) {
+              throw "expected PowerShell metric statement was not found"
+            }
+            $scriptContent = $scriptContent.Replace($entry.Key, $entry.Value)
+          }
+          $scriptContent | Set-Content -LiteralPath $verificationScript -Encoding utf8
 
           $sameOriginHeaders = @{
             Origin = "http://127.0.0.1:8766"
