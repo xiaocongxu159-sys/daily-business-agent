@@ -34,7 +34,6 @@ VersionInfoProductName={#MyAppName}
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加选项："; Flags: unchecked
-Name: "importshortcut"; Description: "创建“导入每日经营连接包”桌面快捷方式（可拖入 .dba）"; GroupDescription: "附加选项："; Flags: checkedonce
 Name: "autostart"; Description: "Windows 登录后自动启动并检查领星更新"; GroupDescription: "自动同步："; Flags: checkedonce
 
 [Files]
@@ -43,7 +42,7 @@ Source: "..\dist\DailyBusinessAgent\*"; DestDir: "{app}"; Flags: ignoreversion r
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
-Name: "{autodesktop}\导入每日经营连接包"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Comment: "把 .dba 文件拖到这里，或直接双击 .dba 文件"; Tasks: importshortcut
+Name: "{autodesktop}\导入每日经营连接包"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Comment: "把 .dba 文件拖到这里，或直接双击 .dba 文件"
 Name: "{userstartup}\{#MyAppName} 后台同步"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--no-browser"; WorkingDir: "{app}"; Tasks: autostart
 
 [Registry]
