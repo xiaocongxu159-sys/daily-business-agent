@@ -75,12 +75,22 @@ jobs:
 
           $verificationScript = ".\scripts\verify_windows_installer.ps1"
           $scriptContent = Get-Content -LiteralPath $verificationScript -Raw
-          $oldLookup = '$property = $row.PSObject.Properties[$Name]'
-          $newLookup = '$property = $row.PSObject.Properties | Where-Object { $_.Name -eq $Name } | Select-Object -First 1'
-          if (-not $scriptContent.Contains($oldLookup)) {
-            throw "expected PowerShell metric lookup was not found"
+          $oldMetricBlock = @'
+    $property = $row.PSObject.Properties[$Name]
+    if ($null -ne $property -and $null -ne $property.Value -and [string]$property.Value -ne "") {
+      $total += [double]$property.Value
+    }
+'@
+          $newMetricBlock = @'
+    $value = $row.$Name
+    if ($null -ne $value -and [string]$value -ne "") {
+      $total += [double]$value
+    }
+'@
+          if (-not $scriptContent.Contains($oldMetricBlock)) {
+            throw "expected PowerShell metric block was not found"
           }
-          $scriptContent.Replace($oldLookup, $newLookup) |
+          $scriptContent.Replace($oldMetricBlock, $newMetricBlock) |
             Set-Content -LiteralPath $verificationScript -Encoding utf8
 
           $sameOriginHeaders = @{
