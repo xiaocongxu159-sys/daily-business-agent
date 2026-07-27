@@ -24,6 +24,7 @@ for package in (
     "Crypto",
     "asyncssh",
     "cytimes",
+    "babel",
     "orjson",
 ):
     try:
@@ -42,10 +43,11 @@ datas = [
     (str(ROOT / "LICENSE"), "."),
     (str(ROOT / "NOTICE"), "."),
 ]
-try:
-    datas.extend(collect_data_files("certifi"))
-except Exception:
-    pass
+for data_package in ("certifi", "babel"):
+    try:
+        datas.extend(collect_data_files(data_package))
+    except Exception:
+        pass
 
 
 a = Analysis(
