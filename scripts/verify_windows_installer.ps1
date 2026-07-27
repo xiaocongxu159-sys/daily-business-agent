@@ -1,5 +1,47 @@
 $ErrorActionPreference = "Stop"
 
+function Assert-SdkRuntime {
+  param(
+    [Parameter(Mandatory = $true)][string]$Executable,
+    [Parameter(Mandatory = $true)][string]$LogName
+  )
+
+  $sdkRuntimeLog = Join-Path $env:RUNNER_TEMP $LogName
+  Remove-Item -LiteralPath $sdkRuntimeLog -Force -ErrorAction SilentlyContinue
+  $previousCrashLog = $env:DAILY_BUSINESS_AGENT_CRASH_LOG
+  $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $sdkRuntimeLog
+  try {
+    $sdkCheck = Start-Process $Executable -ArgumentList @("--verify-sdk-runtime") -Wait -PassThru
+  } finally {
+    $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $previousCrashLog
+  }
+  if ($sdkCheck.ExitCode -ne 0) {
+    if (Test-Path $sdkRuntimeLog) {
+      Write-Host "Frozen SDK runtime diagnostic:"
+      Get-Content -LiteralPath $sdkRuntimeLog
+    }
+    throw "installed executable cannot import Lingxing SDK: $($sdkCheck.ExitCode)"
+  }
+}
+
+function Wait-AgentHealth {
+  param([Parameter(Mandatory = $true)][string]$ExpectedVersion)
+
+  $health = $null
+  foreach ($attempt in 1..60) {
+    try {
+      $health = Invoke-RestMethod "http://127.0.0.1:8766/health" -TimeoutSec 2
+      if ($health.status -eq "ok") { break }
+    } catch {
+      Start-Sleep -Seconds 1
+    }
+  }
+  if (-not $health -or $health.bind -ne "127.0.0.1:8766" -or $health.version -ne $ExpectedVersion) {
+    throw "loopback health failed"
+  }
+  return $health
+}
+
 $version = (Get-Content -Raw "VERSION").Trim()
 $setup = (Resolve-Path "release\DailyBusinessAgent-Setup-$version.exe").Path
 $installDir = Join-Path $env:RUNNER_TEMP "DailyBusinessAgentApp"
@@ -7,37 +49,46 @@ $dataDir = Join-Path $env:RUNNER_TEMP "DailyBusinessAgentData"
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
 Set-Content (Join-Path $dataDir "preserve-me.txt") "keep"
 
-$install = Start-Process $setup -ArgumentList @(
+$installArgs = @(
   "/VERYSILENT",
   "/SUPPRESSMSGBOXES",
   "/NORESTART",
   "/SP-",
   "/DIR=$installDir",
   "/TASKS=autostart"
-) -Wait -PassThru
+)
+
+$install = Start-Process $setup -ArgumentList $installArgs -Wait -PassThru
 if ($install.ExitCode -ne 0) { throw "installer failed: $($install.ExitCode)" }
 
 $exe = Join-Path $installDir "DailyBusinessAgent.exe"
 if (-not (Test-Path $exe)) { throw "installed executable missing" }
 Write-Host "PASS: candidate installed"
 
-$sdkRuntimeLog = Join-Path $env:RUNNER_TEMP "daily-business-agent-sdk-runtime.log"
-Remove-Item -LiteralPath $sdkRuntimeLog -Force -ErrorAction SilentlyContinue
-$previousCrashLog = $env:DAILY_BUSINESS_AGENT_CRASH_LOG
-$env:DAILY_BUSINESS_AGENT_CRASH_LOG = $sdkRuntimeLog
-try {
-  $sdkCheck = Start-Process $exe -ArgumentList @("--verify-sdk-runtime") -Wait -PassThru
-} finally {
-  $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $previousCrashLog
+Assert-SdkRuntime -Executable $exe -LogName "daily-business-agent-sdk-runtime-first-install.log"
+Write-Host "PASS: clean-installed executable imports Lingxing SDK runtime"
+
+$upgradeAgent = Start-Process $exe -ArgumentList @("--no-browser","--data-root",$dataDir) -PassThru
+Wait-AgentHealth -ExpectedVersion $version | Out-Null
+$staleMarker = Join-Path $installDir "_internal\stale-upgrade-marker.txt"
+Set-Content -LiteralPath $staleMarker -Value "must be removed during upgrade"
+
+$upgrade = Start-Process $setup -ArgumentList $installArgs -Wait -PassThru
+if ($upgrade.ExitCode -ne 0) { throw "in-place upgrade failed: $($upgrade.ExitCode)" }
+Start-Sleep -Seconds 2
+$upgradeAgent.Refresh()
+if (-not $upgradeAgent.HasExited) {
+  Stop-Process -Id $upgradeAgent.Id -Force -ErrorAction SilentlyContinue
+  throw "upgrade installer did not stop the running Agent"
 }
-if ($sdkCheck.ExitCode -ne 0) {
-  if (Test-Path $sdkRuntimeLog) {
-    Write-Host "Frozen SDK runtime diagnostic:"
-    Get-Content -LiteralPath $sdkRuntimeLog
-  }
-  throw "installed executable cannot import Lingxing SDK: $($sdkCheck.ExitCode)"
+if (Test-Path $staleMarker) {
+  throw "upgrade installer did not clean the stale PyInstaller runtime directory"
 }
-Write-Host "PASS: installed executable imports Lingxing SDK runtime"
+if (-not (Test-Path (Join-Path $dataDir "preserve-me.txt"))) {
+  throw "upgrade installer deleted user data"
+}
+Assert-SdkRuntime -Executable $exe -LogName "daily-business-agent-sdk-runtime-after-upgrade.log"
+Write-Host "PASS: running-Agent in-place upgrade cleaned stale runtime and preserved user data"
 
 $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\每日经营数据本地助手 后台同步.lnk"
 if (-not (Test-Path $startup)) { throw "startup shortcut missing" }
@@ -65,7 +116,13 @@ if ($importLine -notlike '*Filename: "{app}\{#MyAppExeName}"*') {
 if ($importLine -match 'Parameters:') {
   throw "installer import shortcut must not contain fixed arguments"
 }
-Write-Host "PASS: dropped .dba path will be supplied as the only argument"
+if (-not ($installerLines | Where-Object { $_ -eq 'Type: filesandordirs; Name: "{app}\_internal"' })) {
+  throw "installer stale runtime cleanup contract missing"
+}
+if (-not ($installerLines | Where-Object { $_ -like 'function PrepareToInstall*' })) {
+  throw "installer running-Agent shutdown contract missing"
+}
+Write-Host "PASS: dropped .dba path and safe upgrade contracts verified"
 
 $extensionKey = Get-Item "HKCU:\Software\Classes\.dba"
 $association = [string]$extensionKey.GetValue("")
@@ -81,18 +138,7 @@ Write-Host "PASS: .dba double-click association verified"
 
 $agent = Start-Process $exe -ArgumentList @("--no-browser","--data-root",$dataDir) -PassThru
 try {
-  $health = $null
-  foreach ($attempt in 1..60) {
-    try {
-      $health = Invoke-RestMethod "http://127.0.0.1:8766/health" -TimeoutSec 2
-      if ($health.status -eq "ok") { break }
-    } catch {
-      Start-Sleep -Seconds 1
-    }
-  }
-  if (-not $health -or $health.bind -ne "127.0.0.1:8766" -or $health.version -ne $version) {
-    throw "loopback health failed"
-  }
+  Wait-AgentHealth -ExpectedVersion $version | Out-Null
   $page = Invoke-WebRequest "http://127.0.0.1:8766/lingxing" -UseBasicParsing -TimeoutSec 5
   if ($page.Content -notmatch 'id="package-ready"') { throw "single-file package state missing" }
   if ($page.Content -match 'type="file"') { throw "browser file picker must not ship" }
