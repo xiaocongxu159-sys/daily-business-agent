@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Strict parser for private Daily Business Agent relay connection packages."""
+"""Strict parser for private Daily Business Agent connection packages."""
 from __future__ import annotations
 
 import hashlib
@@ -12,8 +12,10 @@ from datetime import datetime
 from pathlib import PurePath
 from urllib.parse import quote
 
-SCHEMA = "daily-business-agent.relay-connection.v1"
-PACKAGE_SUFFIX = ".dba-connection.json"
+BUNDLE_SCHEMA = "daily-business-agent.connection-bundle.v1"
+PAYLOAD_SCHEMA = "daily-business-agent.relay-connection.v1"
+PACKAGE_SUFFIX = ".dba"
+LEGACY_PACKAGE_SUFFIX = ".dba-connection.json"
 MAX_PACKAGE_BYTES = 64 * 1024
 MAX_CHECKSUM_BYTES = 1024
 
@@ -100,53 +102,22 @@ def _parse_created_at(value: object) -> str:
     return value
 
 
-def parse_connection_package_pair(
-    *,
-    package_name: str,
-    package_text: str,
-    checksum_name: str,
-    checksum_text: str,
-) -> RelayConnectionPackage:
-    package_name = _leaf_name(package_name, "连接包")
-    checksum_name = _leaf_name(checksum_name, "校验")
-    if not package_name.endswith(PACKAGE_SUFFIX):
-        raise ConnectionPackageError(f"连接包文件名必须以 {PACKAGE_SUFFIX} 结尾")
-    if checksum_name != package_name + ".sha256":
-        raise ConnectionPackageError("SHA256 校验文件名与连接包不匹配")
+def _canonical_payload_bytes(payload: dict) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
-    try:
-        package_bytes = package_text.encode("utf-8")
-        checksum_bytes = checksum_text.encode("ascii")
-    except UnicodeError as exc:
-        raise ConnectionPackageError("连接包或校验文件编码不正确") from exc
-    if not package_bytes or len(package_bytes) > MAX_PACKAGE_BYTES:
-        raise ConnectionPackageError("连接包大小不正确")
-    if not checksum_bytes or len(checksum_bytes) > MAX_CHECKSUM_BYTES:
-        raise ConnectionPackageError("SHA256 校验文件大小不正确")
-    if package_text.startswith("\ufeff"):
-        raise ConnectionPackageError("连接包不能包含 UTF-8 BOM")
 
-    match = re.fullmatch(r"([0-9a-fA-F]{64})[ \t]+\*?(.+)", checksum_text.strip())
-    if not match or match.group(2) != package_name:
-        raise ConnectionPackageError("SHA256 校验文件内容不正确")
-    expected_digest = match.group(1).lower()
-    actual_digest = hashlib.sha256(package_bytes).hexdigest()
-    if not hmac.compare_digest(expected_digest, actual_digest):
-        raise ConnectionPackageError("连接包 SHA256 校验失败")
-
-    try:
-        package = json.loads(package_text, object_pairs_hook=_unique_object)
-    except ConnectionPackageError:
-        raise
-    except (TypeError, ValueError) as exc:
-        raise ConnectionPackageError("连接包 JSON 格式不正确") from exc
-
+def _parse_payload(payload: object) -> RelayConnectionPackage:
     package = _require_exact_fields(
-        package,
+        payload,
         {"schema", "package_id", "created_at", "transport", "relay", "contains"},
         "连接包",
     )
-    if package["schema"] != SCHEMA:
+    if package["schema"] != PAYLOAD_SCHEMA:
         raise ConnectionPackageError("连接包版本不受支持")
     if package["transport"] != "pinned_outer_tls":
         raise ConnectionPackageError("连接包传输方式不受支持")
@@ -206,3 +177,92 @@ def parse_connection_package_pair(
         password=password,
         certificate_sha256=fingerprint,
     )
+
+
+def parse_connection_package(
+    *,
+    package_name: str,
+    package_text: str,
+) -> RelayConnectionPackage:
+    package_name = _leaf_name(package_name, "连接包")
+    if not package_name.lower().endswith(PACKAGE_SUFFIX):
+        raise ConnectionPackageError(f"连接包文件名必须以 {PACKAGE_SUFFIX} 结尾")
+    try:
+        package_bytes = package_text.encode("utf-8")
+    except UnicodeError as exc:
+        raise ConnectionPackageError("连接包编码不正确") from exc
+    if not package_bytes or len(package_bytes) > MAX_PACKAGE_BYTES:
+        raise ConnectionPackageError("连接包大小不正确")
+    if package_text.startswith("\ufeff"):
+        raise ConnectionPackageError("连接包不能包含 UTF-8 BOM")
+
+    try:
+        bundle = json.loads(package_text, object_pairs_hook=_unique_object)
+    except ConnectionPackageError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise ConnectionPackageError("连接包格式不正确") from exc
+
+    bundle = _require_exact_fields(bundle, {"schema", "payload", "integrity"}, "连接包封装")
+    if bundle["schema"] != BUNDLE_SCHEMA:
+        raise ConnectionPackageError("连接包封装版本不受支持")
+
+    integrity = _require_exact_fields(
+        bundle["integrity"],
+        {"algorithm", "payload_sha256"},
+        "连接包完整性",
+    )
+    if integrity["algorithm"] != "sha256":
+        raise ConnectionPackageError("连接包完整性算法不受支持")
+    expected_digest = integrity["payload_sha256"]
+    if not isinstance(expected_digest, str) or not _HEX_64.fullmatch(expected_digest.lower()):
+        raise ConnectionPackageError("连接包完整性信息格式不正确")
+    payload = bundle["payload"]
+    if not isinstance(payload, dict):
+        raise ConnectionPackageError("连接包内容格式不正确")
+    actual_digest = hashlib.sha256(_canonical_payload_bytes(payload)).hexdigest()
+    if not hmac.compare_digest(expected_digest.lower(), actual_digest):
+        raise ConnectionPackageError("连接包完整性校验失败")
+    return _parse_payload(payload)
+
+
+def parse_connection_package_pair(
+    *,
+    package_name: str,
+    package_text: str,
+    checksum_name: str,
+    checksum_text: str,
+) -> RelayConnectionPackage:
+    """Legacy parser retained only for controlled migration from 0.2.0."""
+    package_name = _leaf_name(package_name, "连接包")
+    checksum_name = _leaf_name(checksum_name, "校验")
+    if not package_name.endswith(LEGACY_PACKAGE_SUFFIX):
+        raise ConnectionPackageError(f"连接包文件名必须以 {LEGACY_PACKAGE_SUFFIX} 结尾")
+    if checksum_name != package_name + ".sha256":
+        raise ConnectionPackageError("SHA256 校验文件名与连接包不匹配")
+    try:
+        package_bytes = package_text.encode("utf-8")
+        checksum_bytes = checksum_text.encode("ascii")
+    except UnicodeError as exc:
+        raise ConnectionPackageError("连接包或校验文件编码不正确") from exc
+    if not package_bytes or len(package_bytes) > MAX_PACKAGE_BYTES:
+        raise ConnectionPackageError("连接包大小不正确")
+    if not checksum_bytes or len(checksum_bytes) > MAX_CHECKSUM_BYTES:
+        raise ConnectionPackageError("SHA256 校验文件大小不正确")
+    if package_text.startswith("\ufeff"):
+        raise ConnectionPackageError("连接包不能包含 UTF-8 BOM")
+
+    match = re.fullmatch(r"([0-9a-fA-F]{64})[ \t]+\*?(.+)", checksum_text.strip())
+    if not match or match.group(2) != package_name:
+        raise ConnectionPackageError("SHA256 校验文件内容不正确")
+    expected_digest = match.group(1).lower()
+    actual_digest = hashlib.sha256(package_bytes).hexdigest()
+    if not hmac.compare_digest(expected_digest, actual_digest):
+        raise ConnectionPackageError("连接包 SHA256 校验失败")
+    try:
+        payload = json.loads(package_text, object_pairs_hook=_unique_object)
+    except ConnectionPackageError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise ConnectionPackageError("连接包 JSON 格式不正确") from exc
+    return _parse_payload(payload)
