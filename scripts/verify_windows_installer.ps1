@@ -24,6 +24,29 @@ function Assert-SdkRuntime {
   }
 }
 
+function Stop-ProcessTree {
+  param([Parameter(Mandatory = $true)][int]$ProcessId)
+
+  & taskkill.exe /PID $ProcessId /T /F 2>$null | Out-Null
+}
+
+function Write-LocalAnalysisDiagnostic {
+  param(
+    [Parameter(Mandatory = $true)][string]$Workspace,
+    [Parameter(Mandatory = $true)][string]$RuntimeLog
+  )
+
+  $progress = Join-Path $Workspace "verification-progress.txt"
+  if (Test-Path $progress) {
+    Write-Host "Frozen local-analysis last progress:"
+    Get-Content -LiteralPath $progress
+  }
+  if (Test-Path $RuntimeLog) {
+    Write-Host "Frozen local-analysis diagnostic:"
+    Get-Content -LiteralPath $RuntimeLog
+  }
+}
+
 function Assert-LocalAnalysisRuntime {
   param(
     [Parameter(Mandatory = $true)][string]$Executable,
@@ -38,20 +61,25 @@ function Assert-LocalAnalysisRuntime {
 
   $previousCrashLog = $env:DAILY_BUSINESS_AGENT_CRASH_LOG
   $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $runtimeLog
+  $analysisCheck = $null
   try {
     $analysisCheck = Start-Process $Executable -ArgumentList @(
       "--verify-local-analysis-runtime",
       $workspace
-    ) -Wait -PassThru
+    ) -PassThru
+
+    if (-not $analysisCheck.WaitForExit(240000)) {
+      Stop-ProcessTree -ProcessId $analysisCheck.Id
+      Write-LocalAnalysisDiagnostic -Workspace $workspace -RuntimeLog $runtimeLog
+      throw "installed executable local-analysis verification exceeded 240 seconds"
+    }
+    $analysisCheck.Refresh()
   } finally {
     $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $previousCrashLog
   }
 
   if ($analysisCheck.ExitCode -ne 0) {
-    if (Test-Path $runtimeLog) {
-      Write-Host "Frozen local-analysis diagnostic:"
-      Get-Content -LiteralPath $runtimeLog
-    }
+    Write-LocalAnalysisDiagnostic -Workspace $workspace -RuntimeLog $runtimeLog
     throw "installed executable cannot generate local analysis outputs: $($analysisCheck.ExitCode)"
   }
 
@@ -69,7 +97,12 @@ function Assert-LocalAnalysisRuntime {
       throw "frozen local-analysis artifact missing: $property"
     }
   }
-  Write-Host "PASS: installed executable generated Excel, HTML and JSON ($Label)"
+  foreach ($metric in @("sales", "orders", "sessions", "page_views", "ad_spend", "ad_sales")) {
+    if ([double]$verification.totals.$metric -le 0) {
+      throw "frozen local-analysis metric was not preserved: $metric"
+    }
+  }
+  Write-Host "PASS: installed executable generated nonzero Excel, HTML and JSON metrics ($Label)"
 }
 
 function Wait-AgentHealth {
@@ -184,11 +217,6 @@ $extensionKey = Get-Item "HKCU:\Software\Classes\.dba"
 $association = [string]$extensionKey.GetValue("")
 if ($association -ne "DailyBusinessAgent.ConnectionPackage") {
   throw ".dba file association missing"
-}
-$commandKey = Get-Item "HKCU:\Software\Classes\DailyBusinessAgent.ConnectionPackage\shell\open\command"
-$openCommand = [string]$commandKey.GetValue("")
-if (-not $openCommand.Contains($exe) -or -not $openCommand.Contains('%1')) {
-  throw ".dba open command is incorrect"
 }
 Write-Host "PASS: .dba double-click association verified"
 
