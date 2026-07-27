@@ -59,9 +59,21 @@ function Get-MetricSum {
 
   $total = 0.0
   foreach ($row in @($Rows)) {
-    $property = $row.PSObject.Properties[$Name]
-    if ($null -ne $property -and $null -ne $property.Value -and [string]$property.Value -ne "") {
-      $total += [double]$property.Value
+    $value = $null
+    if ($row -is [System.Collections.IDictionary]) {
+      if ($row.Contains($Name)) {
+        $value = $row[$Name]
+      }
+    } else {
+      $property = $row.PSObject.Properties |
+        Where-Object { $_.Name -eq $Name } |
+        Select-Object -First 1
+      if ($null -ne $property) {
+        $value = $property.Value
+      }
+    }
+    if ($null -ne $value -and [string]$value -ne "") {
+      $total += [double]$value
     }
   }
   return $total
@@ -162,11 +174,13 @@ SYNTHETIC-STORE,Synthetic Store,US,SYNTH-SKU-1,SYNTH-SKU-1,B000TEST01,Synthetic 
       }
     }
 
-    $dashboard = Invoke-RestMethod `
+    $dashboardResponse = Invoke-WebRequest `
       -Uri "$base/v1/jobs/$($job.job_id)/artifacts/output/dashboard_data.json" `
       -WebSession $session `
+      -UseBasicParsing `
       -TimeoutSec 15
-    $daily = @($dashboard.daily)
+    $dashboard = $dashboardResponse.Content | ConvertFrom-Json -AsHashtable
+    $daily = @($dashboard["daily"])
     if ($daily.Count -ne 1) {
       throw "installed Agent HTTP dashboard row count mismatch: $($daily.Count)"
     }
