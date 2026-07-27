@@ -24,6 +24,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
+CloseApplicationsFilter={#MyAppExeName}
 RestartApplications=no
 SetupLogging=yes
 ChangesAssociations=yes
@@ -60,22 +61,5 @@ Filename: "{app}\{#MyAppExeName}"; Description: "安装完成后启动本地助�
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#MyAppExeName} /F >NUL 2>&1"; Flags: runhidden; RunOnceId: "StopAgent"
-
-[Code]
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-var
-  ResultCode: Integer;
-begin
-  Exec(
-    ExpandConstant('{cmd}'),
-    '/C taskkill /IM {#MyAppExeName} /F >NUL 2>&1',
-    '',
-    SW_HIDE,
-    ewWaitUntilTerminated,
-    ResultCode
-  );
-  Sleep(1200);
-  Result := '';
-end;
 
 ; 用户数据保存在 %LOCALAPPDATA%\CTJFyrdian\DailyBusinessAgent，升级和卸载都不会删除。
