@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from openpyxl import load_workbook
 
 from src.dashboard_ux_patch import patch_dashboard_html_file
@@ -84,17 +85,98 @@ def test_manifest_job_writes_result_json(tmp_path: Path) -> None:
     assert (tmp_path / "job_result.json").is_file()
 
 
-def test_erp_job_runs_without_automatic_history_scan(tmp_path: Path) -> None:
+def _write_erp(path: Path) -> None:
+    pd.DataFrame([
+        {
+            "日期": "2026-07-24",
+            "shop_id": "STORE-A",
+            "marketplace": "US",
+            "ASIN": "B000TEST1",
+            "MSKU": "SKU-1",
+            "标题": "Synthetic",
+            "销售额": 39.98,
+            "订单量": 2,
+            "Sessions-Total": 10,
+            "PV-Total": 12,
+            "展示": 100,
+            "点击": 10,
+            "广告花费": 5,
+            "广告销售额": 19.99,
+            "广告订单量": 1,
+        }
+    ]).to_excel(path, sheet_name="sheet1", index=False)
+
+
+def test_erp_job_preserves_nonzero_metrics_in_dashboard(tmp_path: Path) -> None:
     input_dir = tmp_path / "input"
     input_dir.mkdir()
     mapping = input_dir / "mapping.csv"
     erp = input_dir / "产品表现ASIN_20260724.xlsx"
-    pd.DataFrame([{"seller-sku": "SKU-1", "asin1": "B000TEST1", "item-name": "Synthetic"}]).to_csv(mapping, index=False)
-    pd.DataFrame([{"日期": "2026-07-24", "ASIN": "B000TEST1", "MSKU": "SKU-1", "标题": "Synthetic", "销售额": 39.98, "订单量": 2, "Sessions-Total": 10, "PV-Total": 12, "展示": 100, "点击": 10, "广告花费": 5, "广告销售额": 19.99, "广告订单量": 1}]).to_excel(erp, sheet_name="sheet1", index=False)
-    result = run_local_engine(LocalEngineRequest(workspace=tmp_path, mapping_file=mapping, erp_files=(erp,), include_history=False, write_excel=False, write_html=False))
+    pd.DataFrame([
+        {
+            "shop_id": "STORE-A",
+            "shop_name": "Synthetic Store",
+            "marketplace": "US",
+            "seller-sku": "SKU-1",
+            "MSKU": "SKU-1",
+            "asin1": "B000TEST1",
+            "item-name": "Synthetic",
+        }
+    ]).to_csv(mapping, index=False)
+    _write_erp(erp)
+
+    result = run_local_engine(
+        LocalEngineRequest(
+            workspace=tmp_path,
+            mapping_file=mapping,
+            erp_files=(erp,),
+            include_history=False,
+            write_excel=True,
+            write_html=True,
+        )
+    )
     assert result.status == "success"
     assert result.row_counts["business_raw"] == 1
     assert result.row_counts["ad_raw"] == 1
+
+    payload = json.loads(Path(result.dashboard_json).read_text(encoding="utf-8"))
+    assert len(payload["daily"]) == 1
+    row = payload["daily"][0]
+    assert float(row["销售额"]) == pytest.approx(39.98)
+    assert float(row["总订单"]) == pytest.approx(2)
+    assert float(row["Sessions"]) == pytest.approx(10)
+    assert float(row["PV"]) == pytest.approx(12)
+    assert float(row["广告花费"]) == pytest.approx(5)
+    assert float(row["广告销售额"]) == pytest.approx(19.99)
+
+
+def test_erp_job_rejects_msku_mapping_source_mismatch(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    mapping = input_dir / "mapping.csv"
+    erp = input_dir / "产品表现ASIN_20260724.xlsx"
+    pd.DataFrame([
+        {
+            "shop_id": "STORE-A",
+            "marketplace": "US",
+            "seller-sku": "SKU-1",
+            "asin1": "B000TEST1",
+            "item-name": "Synthetic",
+        }
+    ]).to_csv(mapping, index=False)
+    _write_erp(erp)
+
+    with pytest.raises(ValueError, match="MSKU"):
+        run_local_engine(
+            LocalEngineRequest(
+                workspace=tmp_path,
+                mapping_file=mapping,
+                erp_files=(erp,),
+                include_history=False,
+                write_excel=False,
+                write_html=False,
+            )
+        )
 
 
 def test_dashboard_filter_uses_compound_scope() -> None:
