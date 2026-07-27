@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Generate a dependency-free local HTML dashboard from the current workbook."""
+"""Generate a rich, dependency-free local HTML dashboard.
+
+The dashboard is fully self-contained: it embeds the current job payload and
+uses inline SVG for charts. It never loads remote scripts, fonts or styles.
+"""
 from __future__ import annotations
 
 import json
@@ -58,7 +62,14 @@ def _payload(excel_path: Path) -> dict:
     sheets = pd.read_excel(excel_path, sheet_name=None)
     daily = sheets.get("每日数据录入", pd.DataFrame())
     quality = sheets.get("数据质量报告", pd.DataFrame())
+    dates = pd.to_datetime(daily.get("日期", pd.Series(dtype=object)), errors="coerce").dropna()
     return {
+        "meta": {
+            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "generated_from": excel_path.name,
+            "min_date": dates.min().strftime("%Y-%m-%d") if not dates.empty else "",
+            "max_date": dates.max().strftime("%Y-%m-%d") if not dates.empty else "",
+        },
         "generated_from": excel_path.name,
         "daily": _records(daily),
         "quality": _records(quality),
@@ -74,6 +85,59 @@ def _safe_json(value) -> str:
     )
 
 
+HTML_TEMPLATE = r'''<!doctype html>
+<html lang="zh-CN" data-local-dashboard-checked="true">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>每日经营看板</title>
+  <style>
+    :root{--ink:#17243a;--muted:#64748b;--line:#dce4ef;--panel:#fff;--bg:#f4f7fb;--blue:#2878b5;--green:#2a9d6f;--amber:#d79b22;--red:#c85555;--purple:#7656a8;--shadow:0 4px 18px rgba(30,48,76,.06)}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}.shell{width:min(100% - 32px,1440px);margin:0 auto;padding-bottom:32px}
+    header{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;padding:25px 0 17px}h1{margin:0;font-size:28px;color:#1d3557}.subtitle{margin:8px 0 0;color:var(--muted)}.source{font-size:12px;line-height:1.7;color:var(--muted);text-align:right}
+    .notice,.panel,.metric,.chart-card{background:var(--panel);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow)}.notice{padding:14px 16px;margin-bottom:14px;background:#ecfdf5;border-color:#9ee7c1}
+    details.filters{margin-bottom:14px}.filters>summary{list-style:none;display:flex;align-items:center;gap:12px;min-height:50px;padding:0 16px;cursor:pointer}.filters>summary::-webkit-details-marker{display:none}.filters>summary b{color:#24405f}.filters>summary span{flex:1;min-width:0;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.filters>summary em{font-style:normal;color:#315b86;font-weight:700}
+    .controls{display:grid;grid-template-columns:repeat(6,minmax(125px,1fr));gap:11px;padding:0 16px 16px}.controls label{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:12px;font-weight:600}.controls input,.controls select{height:38px;border:1px solid #cbd5e1;border-radius:7px;background:#fff;padding:0 9px;color:var(--ink)}
+    .metrics{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:10px;margin-bottom:14px}.metric{padding:13px 14px;min-width:0}.metric span{display:block;color:var(--muted);font-size:12px}.metric strong{display:block;margin-top:7px;font-size:21px;color:#203a5d;overflow:hidden;text-overflow:ellipsis}.metric small{display:block;margin-top:5px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}.chart-card{padding:10px 12px 12px;overflow:hidden}.chart{height:340px;width:100%;touch-action:pan-y}.chart svg{display:block;width:100%;height:100%}.chart-empty{height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+    .panel{padding:16px;margin-bottom:14px}.panel h2{margin:0 0 12px;font-size:18px;color:#243e60}.muted{color:var(--muted)}.table-wrap{max-height:55vh;overflow:auto}table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #e7edf4;padding:8px;text-align:left;white-space:nowrap}th{position:sticky;top:0;background:#eff6ff;z-index:1}.quality-row{padding:7px 0;border-bottom:1px solid #edf1f5}.quality-row:last-child{border-bottom:0}
+    @media(max-width:1180px){.metrics{grid-template-columns:repeat(4,1fr)}.controls{grid-template-columns:repeat(3,1fr)}}@media(max-width:820px){header{align-items:flex-start;flex-direction:column}.source{text-align:left}.charts{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,1fr)}.controls{grid-template-columns:repeat(2,1fr)}}@media(max-width:520px){.shell{width:calc(100% - 18px)}.controls,.metrics{grid-template-columns:1fr}.chart{height:320px}}
+  </style>
+</head>
+<body><div class="shell">
+  <header><div><h1>每日经营动态看板</h1><p class="subtitle">业务流量、销售、广告和库存趋势均来自本机当前分析任务</p></div><div id="source" class="source"></div></header>
+  <div class="notice">全部数据只在本机处理。页面不加载任何外部脚本、字体或网络资源。</div>
+  <details class="filters panel" id="filterDetails"><summary><b>筛选条件</b><span id="filterSummary">全部店铺 · 全部站点 · 全部商品</span><em id="filterToggle">展开筛选</em></summary><div class="controls">
+    <label>店铺<select id="store"></select></label><label>站点<select id="market"></select></label><label>开始日期<input type="date" id="startDate"></label><label>结束日期<input type="date" id="endDate"></label><label style="grid-column:span 2">搜索<input id="search" placeholder="SKU / ASIN / 商品名称"></label>
+  </div></details>
+  <div id="cards" class="metrics"></div>
+  <section class="charts"><div class="chart-card"><div id="trafficChart" class="chart"></div></div><div class="chart-card"><div id="salesChart" class="chart"></div></div><div class="chart-card"><div id="adsChart" class="chart"></div></div><div class="chart-card"><div id="inventoryChart" class="chart"></div></div></section>
+  <section class="panel"><h2>每日商品数据</h2><div id="count" class="muted"></div><div class="table-wrap"><table><thead id="head"></thead><tbody id="body"></tbody></table></div></section>
+  <section class="panel"><h2>数据质量</h2><div id="quality"></div></section>
+</div>
+<script type="application/json" id="dashboard-data">__DATA__</script>
+<script>
+(() => {
+  'use strict';
+  const payload=JSON.parse(document.getElementById('dashboard-data').textContent);const rows=payload.daily||[];
+  const colors=['#2878b5','#2a9d6f','#d79b22','#c85555','#7656a8'];const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const num=(row,names)=>{for(const n of names){const v=Number(row[n]);if(Number.isFinite(v))return v}return 0};const txt=(row,names)=>{for(const n of names){const v=row[n];if(v!==undefined&&v!==null&&String(v)!=='')return String(v)}return''};const dateOf=r=>txt(r,['日期','date','report_date']).slice(0,10);
+  const unique=(name)=>[...new Set(rows.map(r=>String(r[name]??'')).filter(Boolean))].sort();
+  function options(id,values,label){document.getElementById(id).innerHTML='<option value="">全部'+label+'</option>'+values.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('')}
+  options('store',unique('shop_id'),'店铺');options('market',unique('marketplace'),'站点');
+  const dates=rows.map(dateOf).filter(Boolean).sort();if(dates.length){startDate.value=dates[0];endDate.value=dates[dates.length-1];startDate.min=endDate.min=dates[0];startDate.max=endDate.max=dates[dates.length-1]}
+  source.innerHTML=`生成时间：${esc(payload.meta?.generated_at||'-')}<br>数据范围：${esc(payload.meta?.min_date||'-')} 至 ${esc(payload.meta?.max_date||'-')}<br>来源：${esc(payload.generated_from||payload.meta?.generated_from||'-')}`;
+  filterDetails.addEventListener('toggle',()=>filterToggle.textContent=filterDetails.open?'收起筛选':'展开筛选');
+  function filteredRows(){const s=store.value,m=market.value,q=search.value.trim().toLowerCase(),a=startDate.value,b=endDate.value;return rows.filter(r=>{const d=dateOf(r);return(!s||String(r.shop_id??'')===s)&&(!m||String(r.marketplace??'')===m)&&(!a||d>=a)&&(!b||d<=b)&&(!q||[r.SKU,r.MSKU,r.ASIN,r['产品名称']].some(v=>String(v??'').toLowerCase().includes(q)))})}
+  function grouped(data){const map=new Map();for(const r of data){const d=dateOf(r);if(!d)continue;const x=map.get(d)||{date:d,sessions:0,pv:0,orders:0,sales:0,adSpend:0,adSales:0,fba:0,inventory:0};x.sessions+=num(r,['Sessions']);x.pv+=num(r,['PV','Page Views']);x.orders+=num(r,['总订单','Units Ordered','订单量']);x.sales+=num(r,['销售额','Ordered Product Sales']);x.adSpend+=num(r,['广告花费','Spend']);x.adSales+=num(r,['广告销售额','Sales']);x.fba+=num(r,['FBA可售库存']);x.inventory+=num(r,['总库存']);map.set(d,x)}return[...map.values()].sort((a,b)=>a.date.localeCompare(b.date))}
+  function chart(id,title,data,series){const box=document.getElementById(id),w=Math.max(360,box.clientWidth||720),h=Math.max(300,box.clientHeight||340);if(!data.length){box.innerHTML=`<div class="chart-empty">${esc(title)}：当前筛选条件无数据</div>`;return}const L=64,R=64,T=72,B=52,pw=w-L-R,ph=h-T-B;const axisMax=[0,0];series.forEach(s=>data.forEach(r=>axisMax[s.axis||0]=Math.max(axisMax[s.axis||0],Number(r[s.key])||0)));axisMax[0]=axisMax[0]||1;axisMax[1]=axisMax[1]||1;let out=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(title)}"><text x="16" y="27" font-size="16" font-weight="700" fill="#243e60">${esc(title)}</text>`;let lx=16;series.forEach((s,i)=>{out+=`<line x1="${lx}" y1="50" x2="${lx+18}" y2="50" stroke="${colors[i]}" stroke-width="3"/><text x="${lx+24}" y="54" font-size="11" fill="#475569">${esc(s.name)}</text>`;lx+=Math.max(92,48+s.name.length*12)});for(let i=0;i<=4;i++){const y=T+ph*i/4;out+=`<line x1="${L}" y1="${y}" x2="${L+pw}" y2="${y}" stroke="#e9eef5"/><text x="${L-8}" y="${y+4}" text-anchor="end" font-size="10" fill="#64748b">${(axisMax[0]*(4-i)/4).toFixed(axisMax[0]<20?1:0)}</text>`;if(series.some(s=>(s.axis||0)===1))out+=`<text x="${L+pw+8}" y="${y+4}" font-size="10" fill="#64748b">${(axisMax[1]*(4-i)/4).toFixed(axisMax[1]<20?1:0)}</text>`}const step=data.length>1?pw/(data.length-1):0,skip=Math.max(1,Math.ceil(data.length/8));data.forEach((r,i)=>{if(i%skip===0||i===data.length-1){const x=L+(data.length>1?i*step:pw/2);out+=`<text x="${x}" y="${T+ph+22}" text-anchor="end" transform="rotate(-38 ${x} ${T+ph+22})" font-size="10" fill="#64748b">${esc(r.date.slice(5))}</text>`}});series.forEach((s,si)=>{const points=data.map((r,i)=>{const x=L+(data.length>1?i*step:pw/2),v=Number(r[s.key])||0,y=T+ph-v/axisMax[s.axis||0]*ph;return{x,y,v,date:r.date}});out+=`<polyline fill="none" stroke="${colors[si]}" stroke-width="2.5" points="${points.map(p=>p.x+','+p.y).join(' ')}"/>`;points.forEach(p=>out+=`<circle cx="${p.x}" cy="${p.y}" r="${data.length<16?3.5:2}" fill="${colors[si]}"><title>${esc(p.date+' '+s.name+'：'+p.v.toLocaleString())}</title></circle>`) });box.innerHTML=out+'</svg>'}
+  function render(){const data=filteredRows(),sum=names=>data.reduce((a,r)=>a+num(r,names),0),sales=sum(['销售额','Ordered Product Sales']),orders=sum(['总订单','Units Ordered','订单量']),sessions=sum(['Sessions']),pv=sum(['PV','Page Views']),adSpend=sum(['广告花费','Spend']),adSales=sum(['广告销售额','Sales']),inventory=sum(['总库存']);const acos=adSales>0?adSpend/adSales*100:0;const metrics=[['记录数',data.length,'筛选后数据行'],['销售额',sales.toFixed(2),'筛选区间累计'],['订单量',orders.toFixed(0),'筛选区间累计'],['Sessions',sessions.toFixed(0),'业务流量'],['PV',pv.toFixed(0),'页面浏览量'],['广告花费',adSpend.toFixed(2),'筛选区间累计'],['广告销售额',adSales.toFixed(2),'筛选区间累计'],['ACoS',acos.toFixed(2)+'%','广告花费 ÷ 广告销售额']];cards.innerHTML=metrics.map(x=>`<div class="metric"><span>${esc(x[0])}</span><strong>${esc(x[1])}</strong><small>${esc(x[2])}</small></div>`).join('');const g=grouped(data);chart('trafficChart','业务流量趋势',g,[{name:'Sessions',key:'sessions'},{name:'PV',key:'pv'}]);chart('salesChart','销量与销售额趋势',g,[{name:'订单量',key:'orders'},{name:'销售额',key:'sales',axis:1}]);chart('adsChart','广告花费与销售额趋势',g,[{name:'广告花费',key:'adSpend'},{name:'广告销售额',key:'adSales',axis:1}]);chart('inventoryChart','库存趋势',g,[{name:'FBA可售库存',key:'fba'},{name:'总库存',key:'inventory'}]);filterSummary.textContent=`${store.value||'全部店铺'} · ${market.value||'全部站点'} · ${search.value||'全部商品'} · ${startDate.value||'最早'} 至 ${endDate.value||'最新'}`;const cols=['日期','shop_name','marketplace','SKU','ASIN','产品名称','Sessions','PV','总订单','销售额','广告花费','广告销售额','FBA可售库存','总库存'];count.textContent=`显示 ${data.length} 条记录`;head.innerHTML='<tr>'+cols.map(c=>`<th>${esc(c)}</th>`).join('')+'</tr>';body.innerHTML=data.slice(0,2000).map(r=>'<tr>'+cols.map(c=>`<td>${esc(r[c])}</td>`).join('')+'</tr>').join('');const q=payload.quality||[];quality.innerHTML=q.map(r=>`<div class="quality-row"><b>${esc(r['类别']||'问题')}</b>：${esc(r['内容']||JSON.stringify(r))}</div>`).join('')||'<span class="muted">未发现数据质量问题</span>'}
+  ['store','market','startDate','endDate'].forEach(id=>document.getElementById(id).addEventListener('change',render));search.addEventListener('input',render);window.addEventListener('resize',()=>requestAnimationFrame(render));render();
+})();
+</script></body></html>'''
+
+
 def write_html_dashboard(excel_path, output_dir=None):
     excel = Path(excel_path).resolve()
     output_root = Path(output_dir or excel.parent).resolve()
@@ -82,23 +146,5 @@ def write_html_dashboard(excel_path, output_dir=None):
     json_path = output_root / "dashboard_data.json"
     html_path = output_root / "dashboard.html"
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    encoded = _safe_json(payload)
-    html = """<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'">
-<title>每日经营看板</title><style>
-body{margin:0;font-family:Inter,'Microsoft YaHei',sans-serif;background:#f4f6f9;color:#172033}.wrap{width:min(1280px,calc(100% - 32px));margin:24px auto}.notice,.card{background:#fff;border:1px solid #dde4ee;border-radius:12px;padding:16px;margin-bottom:14px}.notice{background:#ecfdf5;border-color:#9ee7c1}.filters{display:flex;gap:10px;flex-wrap:wrap}select,input{min-height:38px;padding:7px 9px;border:1px solid #cbd5e1;border-radius:7px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.metric{background:#fff;border:1px solid #dde4ee;border-radius:10px;padding:14px}.metric b{display:block;font-size:24px;margin-top:5px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid #e5e7eb;padding:8px;text-align:left;white-space:nowrap}th{position:sticky;top:0;background:#eff6ff}.table-wrap{max-height:62vh;overflow:auto}.muted{color:#64748b}@media(max-width:700px){.wrap{width:calc(100% - 18px)}}
-</style></head><body><div class="wrap"><h1>每日经营看板</h1><div class="notice">全部数据来自本机当前分析任务。此页面不加载任何外部脚本或网络资源。</div>
-<div class="card filters"><label>店铺 <select id="store"></select></label><label>站点 <select id="market"></select></label><label>搜索 <input id="search" placeholder="SKU / ASIN / 商品名称"></label></div>
-<div id="cards" class="cards"></div><div class="card"><h2>每日商品数据</h2><div id="count" class="muted"></div><div class="table-wrap"><table><thead id="head"></thead><tbody id="body"></tbody></table></div></div>
-<div class="card"><h2>数据质量</h2><div id="quality"></div></div></div>
-<script type="application/json" id="dashboard-data">__DATA__</script><script>
-const payload=JSON.parse(document.getElementById('dashboard-data').textContent);const rows=payload.daily||[];const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const number=(row,names)=>{for(const n of names){const v=Number(row[n]);if(Number.isFinite(v))return v}return 0};const unique=(name)=>[...new Set(rows.map(r=>String(r[name]??'')).filter(Boolean))].sort();
-function options(id,values,label){document.getElementById(id).innerHTML='<option value="">全部'+label+'</option>'+values.map(v=>`<option>${esc(v)}</option>`).join('')};options('store',unique('shop_id'),'店铺');options('market',unique('marketplace'),'站点');
-const cols=['日期','shop_name','marketplace','SKU','ASIN','产品名称','Sessions','PV','总订单','销售额','广告花费','广告销售额','FBA可售库存','总库存'];
-function render(){const store=document.getElementById('store').value,market=document.getElementById('market').value,q=document.getElementById('search').value.trim().toLowerCase();const filtered=rows.filter(r=>(!store||String(r.shop_id??'')===store)&&(!market||String(r.marketplace??'')===market)&&(!q||[r.SKU,r.ASIN,r['产品名称']].some(v=>String(v??'').toLowerCase().includes(q))));const sum=names=>filtered.reduce((a,r)=>a+number(r,names),0);const metrics=[['记录数',filtered.length],['销售额',sum(['销售额']).toFixed(2)],['订单量',sum(['总订单','Units Ordered']).toFixed(0)],['广告花费',sum(['广告花费']).toFixed(2)],['广告销售额',sum(['广告销售额']).toFixed(2)]];document.getElementById('cards').innerHTML=metrics.map(m=>`<div class="metric">${esc(m[0])}<b>${esc(m[1])}</b></div>`).join('');document.getElementById('count').textContent=`显示 ${filtered.length} 条记录`;document.getElementById('head').innerHTML='<tr>'+cols.map(c=>`<th>${esc(c)}</th>`).join('')+'</tr>';document.getElementById('body').innerHTML=filtered.slice(0,2000).map(r=>'<tr>'+cols.map(c=>`<td>${esc(r[c])}</td>`).join('')+'</tr>').join('')}
-['store','market','search'].forEach(id=>document.getElementById(id).addEventListener(id==='search'?'input':'change',render));document.getElementById('quality').innerHTML=(payload.quality||[]).map(r=>`<div><b>${esc(r['类别'])}</b>：${esc(r['内容'])}</div>`).join('')||'<span class="muted">未发现数据质量问题</span>';render();
-</script></body></html>""".replace("__DATA__", encoded)
-    html_path.write_text(html, encoding="utf-8")
+    html_path.write_text(HTML_TEMPLATE.replace("__DATA__", _safe_json(payload)), encoding="utf-8")
     return html_path, json_path
