@@ -8,8 +8,6 @@ import sys
 import traceback
 from pathlib import Path
 
-from agent.run_agent import main
-
 
 def _ensure_standard_streams() -> None:
     for name in ("stdout", "stderr"):
@@ -29,11 +27,33 @@ def _write_crash_log() -> None:
         pass
 
 
+def _runtime_verification_workspace(argv: list[str]) -> Path | None:
+    flag = "--verify-local-analysis-runtime"
+    if flag not in argv:
+        return None
+    index = argv.index(flag)
+    if index + 1 >= len(argv):
+        raise RuntimeError(f"{flag} requires a workspace path")
+    return Path(argv[index + 1])
+
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     _ensure_standard_streams()
     try:
-        main()
+        from agent.frozen_runtime import (
+            install_frozen_runtime_patches,
+            verify_local_analysis_runtime,
+        )
+
+        verification_workspace = _runtime_verification_workspace(sys.argv[1:])
+        if verification_workspace is not None:
+            verify_local_analysis_runtime(verification_workspace)
+        else:
+            install_frozen_runtime_patches()
+            from agent.run_agent import main
+
+            main()
     except BaseException:
         _write_crash_log()
         raise
