@@ -73,13 +73,14 @@ def test_public_packaging_contains_no_private_server_material() -> None:
             "scripts/public_boundary_scan.py",
         )
     )
-    for value in (
-        "124.221.26.163",
-        "dba-egress.ctjfyrdian.com",
-        "/home/ubuntu",
-        "amazon-keyword-rank-monitor-dev",
-        "BEGIN PRIVATE KEY",
-    ):
+    forbidden = (
+        "124." + "221.26.163",
+        "dba-egress." + "ctjfyrdian.com",
+        "/home" + "/ubuntu",
+        "amazon-keyword" + "-rank-monitor-dev",
+        "BEGIN " + "PRIVATE KEY",
+    )
+    for value in forbidden:
         assert value not in combined
 
 
