@@ -47,8 +47,16 @@ def test_pyinstaller_bundles_both_pages_engine_config_and_sdk() -> None:
         '"lingxingapi"',
         '"aiohttp_socks"',
         '"Crypto"',
+        '"babel"',
     ):
         assert required in spec
+
+
+def test_agent_runtime_declares_frozen_sdk_dependencies() -> None:
+    build_requirements = read("requirements-build.txt")
+    agent_requirements = read("requirements-agent.txt")
+    assert "Babel==2.17.0" in build_requirements
+    assert "Babel>=2.17,<3.0" in agent_requirements
 
 
 def test_installer_preserves_accepted_upgrade_paths_and_single_file_association() -> None:
