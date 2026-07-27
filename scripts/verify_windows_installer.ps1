@@ -24,87 +24,6 @@ function Assert-SdkRuntime {
   }
 }
 
-function Stop-ProcessTree {
-  param([Parameter(Mandatory = $true)][int]$ProcessId)
-
-  & taskkill.exe /PID $ProcessId /T /F 2>$null | Out-Null
-}
-
-function Write-LocalAnalysisDiagnostic {
-  param(
-    [Parameter(Mandatory = $true)][string]$Workspace,
-    [Parameter(Mandatory = $true)][string]$RuntimeLog
-  )
-
-  $progress = Join-Path $Workspace "verification-progress.txt"
-  if (Test-Path $progress) {
-    Write-Host "Frozen local-analysis last progress:"
-    Get-Content -LiteralPath $progress
-  }
-  if (Test-Path $RuntimeLog) {
-    Write-Host "Frozen local-analysis diagnostic:"
-    Get-Content -LiteralPath $RuntimeLog
-  }
-}
-
-function Assert-LocalAnalysisRuntime {
-  param(
-    [Parameter(Mandatory = $true)][string]$Executable,
-    [Parameter(Mandatory = $true)][string]$Label
-  )
-
-  $workspace = Join-Path $env:RUNNER_TEMP ("local-analysis-runtime-" + $Label)
-  $runtimeLog = Join-Path $env:RUNNER_TEMP ("local-analysis-runtime-" + $Label + ".log")
-  Remove-Item -LiteralPath $workspace -Recurse -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $runtimeLog -Force -ErrorAction SilentlyContinue
-  New-Item -ItemType Directory -Force -Path $workspace | Out-Null
-
-  $previousCrashLog = $env:DAILY_BUSINESS_AGENT_CRASH_LOG
-  $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $runtimeLog
-  $analysisCheck = $null
-  try {
-    $analysisCheck = Start-Process $Executable -ArgumentList @(
-      "--verify-local-analysis-runtime",
-      $workspace
-    ) -PassThru
-
-    if (-not $analysisCheck.WaitForExit(240000)) {
-      Stop-ProcessTree -ProcessId $analysisCheck.Id
-      Write-LocalAnalysisDiagnostic -Workspace $workspace -RuntimeLog $runtimeLog
-      throw "installed executable local-analysis verification exceeded 240 seconds"
-    }
-    $analysisCheck.Refresh()
-  } finally {
-    $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $previousCrashLog
-  }
-
-  if ($analysisCheck.ExitCode -ne 0) {
-    Write-LocalAnalysisDiagnostic -Workspace $workspace -RuntimeLog $runtimeLog
-    throw "installed executable cannot generate local analysis outputs: $($analysisCheck.ExitCode)"
-  }
-
-  $verificationPath = Join-Path $workspace "verification-result.json"
-  if (-not (Test-Path $verificationPath)) {
-    throw "frozen local-analysis verification result missing"
-  }
-  $verification = Get-Content -LiteralPath $verificationPath -Raw | ConvertFrom-Json
-  if ($verification.status -ne "success") {
-    throw "frozen local-analysis status was not success"
-  }
-  foreach ($property in @("excel", "html", "json")) {
-    $artifact = [string]$verification.$property
-    if ([string]::IsNullOrWhiteSpace($artifact) -or -not (Test-Path -LiteralPath $artifact)) {
-      throw "frozen local-analysis artifact missing: $property"
-    }
-  }
-  foreach ($metric in @("sales", "orders", "sessions", "page_views", "ad_spend", "ad_sales")) {
-    if ([double]$verification.totals.$metric -le 0) {
-      throw "frozen local-analysis metric was not preserved: $metric"
-    }
-  }
-  Write-Host "PASS: installed executable generated nonzero Excel, HTML and JSON metrics ($Label)"
-}
-
 function Wait-AgentHealth {
   param([Parameter(Mandatory = $true)][string]$ExpectedVersion)
 
@@ -132,6 +51,155 @@ function Wait-PortReleased {
   throw "Agent port was not released after safe stop"
 }
 
+function Get-MetricSum {
+  param(
+    [Parameter(Mandatory = $true)]$Rows,
+    [Parameter(Mandatory = $true)][string]$Name
+  )
+
+  $total = 0.0
+  foreach ($row in @($Rows)) {
+    $property = $row.PSObject.Properties[$Name]
+    if ($null -ne $property -and $null -ne $property.Value -and [string]$property.Value -ne "") {
+      $total += [double]$property.Value
+    }
+  }
+  return $total
+}
+
+function Assert-LocalAnalysisThroughHttp {
+  param(
+    [Parameter(Mandatory = $true)][string]$Executable,
+    [Parameter(Mandatory = $true)][string]$ExpectedVersion,
+    [Parameter(Mandatory = $true)][string]$DataRoot,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+
+  $workspace = Join-Path $env:RUNNER_TEMP ("http-analysis-" + $Label)
+  Remove-Item -LiteralPath $workspace -Recurse -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $workspace | Out-Null
+
+  $mapping = Join-Path $workspace "mapping.csv"
+  $erp = Join-Path $workspace "product-performance.csv"
+
+  @"
+shop_id,shop_name,marketplace,seller-sku,MSKU,asin1,item-name,quantity
+SYNTHETIC-STORE,Synthetic Store,US,SYNTH-SKU-1,SYNTH-SKU-1,B000TEST01,Synthetic Product,10
+"@ | Set-Content -LiteralPath $mapping -Encoding utf8
+
+  @"
+日期,shop_id,marketplace,ASIN,MSKU,标题,销售额,订单量,Sessions-Total,PV-Total,展示,点击,广告花费,广告销售额,广告订单量
+2026-07-27,SYNTHETIC-STORE,US,B000TEST01,SYNTH-SKU-1,Synthetic Product,39.98,2,10,12,100,10,5,19.99,1
+"@ | Set-Content -LiteralPath $erp -Encoding utf8
+
+  $agent = Start-Process $Executable -ArgumentList @("--no-browser", "--data-root", $DataRoot) -PassThru
+  try {
+    Wait-AgentHealth -ExpectedVersion $ExpectedVersion | Out-Null
+    $base = "http://127.0.0.1:8766"
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    Invoke-WebRequest -Uri "$base/" -WebSession $session -UseBasicParsing -TimeoutSec 10 | Out-Null
+
+    $job = Invoke-RestMethod `
+      -Uri "$base/v1/jobs" `
+      -Method Post `
+      -WebSession $session `
+      -ContentType "application/json" `
+      -Body (@{
+        label = "windows-http-$Label"
+        write_excel = $true
+        write_html = $true
+      } | ConvertTo-Json) `
+      -TimeoutSec 15
+
+    Invoke-RestMethod `
+      -Uri "$base/v1/jobs/$($job.job_id)/files/mapping" `
+      -Method Post `
+      -WebSession $session `
+      -Form @{ file = Get-Item -LiteralPath $mapping } `
+      -TimeoutSec 30 | Out-Null
+
+    Invoke-RestMethod `
+      -Uri "$base/v1/jobs/$($job.job_id)/files/erp" `
+      -Method Post `
+      -WebSession $session `
+      -Form @{ file = Get-Item -LiteralPath $erp } `
+      -TimeoutSec 30 | Out-Null
+
+    $queued = Invoke-RestMethod `
+      -Uri "$base/v1/jobs/$($job.job_id)/run" `
+      -Method Post `
+      -WebSession $session `
+      -TimeoutSec 15
+    if ($queued.status -ne "queued") {
+      throw "installed Agent did not queue the HTTP analysis job"
+    }
+
+    $snapshot = $null
+    foreach ($attempt in 1..180) {
+      $snapshot = Invoke-RestMethod `
+        -Uri "$base/v1/jobs/$($job.job_id)" `
+        -WebSession $session `
+        -TimeoutSec 10
+      if ($snapshot.status -in @("success", "failed")) { break }
+      Start-Sleep -Seconds 1
+    }
+    if (-not $snapshot -or $snapshot.status -ne "success") {
+      $detail = if ($snapshot) { [string]$snapshot.error } else { "no job response" }
+      throw "installed Agent HTTP analysis did not succeed: $detail"
+    }
+
+    $artifactPayload = Invoke-RestMethod `
+      -Uri "$base/v1/jobs/$($job.job_id)/artifacts" `
+      -WebSession $session `
+      -TimeoutSec 15
+    $paths = @($artifactPayload.artifacts | ForEach-Object { [string]$_.relative_path })
+    if (-not ($paths | Where-Object { $_ -like "output/*.xlsx" })) {
+      throw "installed Agent HTTP analysis did not create Excel"
+    }
+    foreach ($required in @("output/dashboard.html", "output/dashboard_data.json", "job_result.json")) {
+      if ($required -notin $paths) {
+        throw "installed Agent HTTP analysis artifact missing: $required"
+      }
+    }
+
+    $dashboard = Invoke-RestMethod `
+      -Uri "$base/v1/jobs/$($job.job_id)/artifacts/output/dashboard_data.json" `
+      -WebSession $session `
+      -TimeoutSec 15
+    $daily = @($dashboard.daily)
+    if ($daily.Count -ne 1) {
+      throw "installed Agent HTTP dashboard row count mismatch: $($daily.Count)"
+    }
+
+    $actual = @{
+      sales = Get-MetricSum -Rows $daily -Name "销售额"
+      orders = Get-MetricSum -Rows $daily -Name "总订单"
+      sessions = Get-MetricSum -Rows $daily -Name "Sessions"
+      page_views = Get-MetricSum -Rows $daily -Name "PV"
+      ad_spend = Get-MetricSum -Rows $daily -Name "广告花费"
+      ad_sales = Get-MetricSum -Rows $daily -Name "广告销售额"
+    }
+    $expected = @{
+      sales = 39.98
+      orders = 2.0
+      sessions = 10.0
+      page_views = 12.0
+      ad_spend = 5.0
+      ad_sales = 19.99
+    }
+    foreach ($metric in $expected.Keys) {
+      if ([Math]::Abs([double]$actual[$metric] - [double]$expected[$metric]) -gt 0.001) {
+        throw "installed Agent HTTP analysis lost metric $metric: actual=$($actual[$metric]) expected=$($expected[$metric])"
+      }
+    }
+    Write-Host "PASS: installed Agent queued, ran and preserved nonzero dashboard metrics ($Label)"
+  } finally {
+    Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue
+    Wait-Process -Id $agent.Id -ErrorAction SilentlyContinue
+    Wait-PortReleased
+  }
+}
+
 $version = (Get-Content -Raw "VERSION").Trim()
 $setup = (Resolve-Path "release\DailyBusinessAgent-Setup-$version.exe").Path
 $installDir = Join-Path $env:RUNNER_TEMP "DailyBusinessAgentApp"
@@ -157,9 +225,9 @@ Write-Host "PASS: candidate installed"
 
 Assert-SdkRuntime -Executable $exe -LogName "daily-business-agent-sdk-runtime-first-install.log"
 Write-Host "PASS: clean-installed executable imports Lingxing SDK runtime"
-Assert-LocalAnalysisRuntime -Executable $exe -Label "first-install"
+Assert-LocalAnalysisThroughHttp -Executable $exe -ExpectedVersion $version -DataRoot $dataDir -Label "first-install"
 
-$upgradeAgent = Start-Process $exe -ArgumentList @("--no-browser","--data-root",$dataDir) -PassThru
+$upgradeAgent = Start-Process $exe -ArgumentList @("--no-browser", "--data-root", $dataDir) -PassThru
 Wait-AgentHealth -ExpectedVersion $version | Out-Null
 $staleMarker = Join-Path $installDir "_internal\stale-upgrade-marker.txt"
 Set-Content -LiteralPath $staleMarker -Value "must be removed during upgrade"
@@ -176,7 +244,7 @@ if (-not (Test-Path (Join-Path $dataDir "preserve-me.txt"))) {
   throw "upgrade installer deleted user data"
 }
 Assert-SdkRuntime -Executable $exe -LogName "daily-business-agent-sdk-runtime-after-upgrade.log"
-Assert-LocalAnalysisRuntime -Executable $exe -Label "after-upgrade"
+Assert-LocalAnalysisThroughHttp -Executable $exe -ExpectedVersion $version -DataRoot $dataDir -Label "after-upgrade"
 Write-Host "PASS: stopped-Agent in-place upgrade cleaned stale runtime and preserved user data"
 
 $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\每日经营数据本地助手 后台同步.lnk"
@@ -218,9 +286,14 @@ $association = [string]$extensionKey.GetValue("")
 if ($association -ne "DailyBusinessAgent.ConnectionPackage") {
   throw ".dba file association missing"
 }
+$commandKey = Get-Item "HKCU:\Software\Classes\DailyBusinessAgent.ConnectionPackage\shell\open\command"
+$openCommand = [string]$commandKey.GetValue("")
+if (-not $openCommand.Contains($exe) -or -not $openCommand.Contains('%1')) {
+  throw ".dba open command is incorrect"
+}
 Write-Host "PASS: .dba double-click association verified"
 
-$agent = Start-Process $exe -ArgumentList @("--no-browser","--data-root",$dataDir) -PassThru
+$agent = Start-Process $exe -ArgumentList @("--no-browser", "--data-root", $dataDir) -PassThru
 try {
   Wait-AgentHealth -ExpectedVersion $version | Out-Null
   $page = Invoke-WebRequest "http://127.0.0.1:8766/lingxing" -UseBasicParsing -TimeoutSec 5
@@ -229,12 +302,14 @@ try {
   if ($page.Content -match '\.sha256') { throw "sidecar checksum instructions must not ship" }
   if ($page.Content -match 'id="proxy-url"') { throw "manual proxy input must not ship" }
   $listeners = Get-NetTCPConnection -State Listen -LocalPort 8766
-  if ($listeners.LocalAddress | Where-Object { $_ -notin @("127.0.0.1","::1") }) {
+  if ($listeners.LocalAddress | Where-Object { $_ -notin @("127.0.0.1", "::1") }) {
     throw "non-loopback listener detected"
   }
   Write-Host "PASS: loopback UI and hidden technical fields verified"
 } finally {
   Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue
+  Wait-Process -Id $agent.Id -ErrorAction SilentlyContinue
+  Wait-PortReleased
 }
 
 $uninstaller = Join-Path $installDir "unins000.exe"
