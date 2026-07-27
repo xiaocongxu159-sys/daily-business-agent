@@ -68,14 +68,25 @@ jobs:
       - name: Build unified installer
         run: .\packaging\build_installer.ps1
       - name: Verify install, frozen SDK, real analysis, clean upgrade, association and data retention
+        timeout-minutes: 10
         run: |
           $diagnostic = Join-Path $env:RUNNER_TEMP "windows-verification-error.txt"
           Remove-Item -LiteralPath $diagnostic -Force -ErrorAction SilentlyContinue
+          $sameOriginHeaders = @{
+            Origin = "http://127.0.0.1:8766"
+            Referer = "http://127.0.0.1:8766/"
+            "Sec-Fetch-Site" = "same-origin"
+          }
+          $PSDefaultParameterValues['Invoke-RestMethod:Headers'] = $sameOriginHeaders
+          $PSDefaultParameterValues['Invoke-WebRequest:Headers'] = $sameOriginHeaders
           try {
             .\scripts\verify_windows_installer.ps1
           } catch {
             $_ | Format-List * -Force | Out-String | Set-Content -LiteralPath $diagnostic -Encoding utf8
             throw
+          } finally {
+            $PSDefaultParameterValues.Remove('Invoke-RestMethod:Headers')
+            $PSDefaultParameterValues.Remove('Invoke-WebRequest:Headers')
           }
       - name: Upload Windows verification diagnostics
         if: failure()
