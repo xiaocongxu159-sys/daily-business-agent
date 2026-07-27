@@ -1,0 +1,61 @@
+name: Browser UX
+
+on:
+  pull_request:
+    paths:
+      - "agent/**"
+      - "src/**"
+      - "tests/browser_public_pages.py"
+      - "tests/browser_lingxing_steps.py"
+      - "requirements*.txt"
+      - "VERSION"
+      - ".github/workflows/browser-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "agent/**"
+      - "src/**"
+      - "tests/browser_public_pages.py"
+      - "tests/browser_lingxing_steps.py"
+      - "requirements*.txt"
+      - "VERSION"
+      - ".github/workflows/browser-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  chromium-local-pages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-build.txt
+      - name: Install browser acceptance dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check
+          -r requirements-build.txt playwright==1.55.0
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Check report page in Chromium
+        run: python tests/browser_public_pages.py --check report-page
+      - name: Check report analysis in Chromium
+        run: python tests/browser_public_pages.py --check report-analysis
+      - name: Check dashboard link in Chromium
+        run: python tests/browser_public_pages.py --check dashboard-link
+      - name: Check dashboard loading in Chromium
+        run: python tests/browser_public_pages.py --check dashboard-load
+      - name: Check dashboard product payload in Chromium
+        run: python tests/browser_public_pages.py --check dashboard-payload-product
+      - name: Check dashboard sales payload in Chromium
+        run: python tests/browser_public_pages.py --check dashboard-payload-sales
+      - name: Check dashboard rendered product in Chromium
+        run: python tests/browser_public_pages.py --check dashboard-render-product
+      - name: Check dashboard rendered sales in Chromium
+        run: python tests/browser_public_pages.py --check dashboard-render-sales
+      - name: Check single-file Lingxing page in Chromium
+        run: python tests/browser_lingxing_steps.py --check page
