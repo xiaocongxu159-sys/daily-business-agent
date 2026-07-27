@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Attach the package-only Lingxing UI and endpoints to the loopback Agent."""
+"""Attach the single-file Lingxing UI and endpoints to the loopback Agent."""
 from __future__ import annotations
 
 import secrets
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -11,20 +12,22 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, SecretStr
 
 from agent.app import create_app
-from agent.lingxing_connection_package import ConnectionPackageError, parse_connection_package_pair
+from agent.lingxing_connection_package import ConnectionPackageError
+from agent.lingxing_package_import import PendingConnectionPackageStore
 from agent.lingxing_secure_store import LingxingCredentials, LingxingLocalStore, SecretProtector
 from agent.lingxing_service import LingxingProvider
 from agent.lingxing_tls_proxy import TlsLingxingSyncService, TlsSdkLingxingProvider
 from agent.settings import AgentSettings
 
 
+class LingxingStagePackageRequest(BaseModel):
+    source_path: SecretStr = Field(min_length=1, max_length=4096)
+
+
 class LingxingPackageConfigureRequest(BaseModel):
     app_id: str = Field(min_length=1, max_length=200)
     app_secret: SecretStr
-    package_name: str = Field(min_length=1, max_length=255)
-    package_text: SecretStr = Field(min_length=1, max_length=64 * 1024)
-    checksum_name: str = Field(min_length=1, max_length=255)
-    checksum_text: SecretStr = Field(min_length=1, max_length=1024)
+    import_token: SecretStr = Field(min_length=20, max_length=200)
     auto_sync: bool = True
     sync_interval_minutes: int = Field(default=120, ge=30, le=1440)
 
@@ -53,8 +56,10 @@ def attach_lingxing(
     local_ui_path = Path(__file__).resolve().parent / "static" / "lingxing.html"
     store = LingxingLocalStore(settings.data_root, protector=protector)
     service = TlsLingxingSyncService(store, provider_factory=provider_factory)
+    pending_packages = PendingConnectionPackageStore()
     app.state.lingxing_store = store
     app.state.lingxing_service = service
+    app.state.pending_connection_packages = pending_packages
     app.add_event_handler("shutdown", service.stop)
 
     def is_local_ui_request(request: Request) -> bool:
@@ -103,22 +108,44 @@ def attach_lingxing(
     def lingxing_status() -> dict:
         return service.public_status()
 
+    @app.post("/v1/lingxing/stage-package", dependencies=[Depends(require_local_auth)])
+    def stage_lingxing_package(payload: LingxingStagePackageRequest) -> dict:
+        try:
+            item = pending_packages.stage_path(payload.source_path.get_secret_value())
+        except ConnectionPackageError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "import_token": item.token,
+            "package_name": item.source_name,
+            "expires_in_seconds": pending_packages.lifetime_seconds,
+        }
+
+    @app.get(
+        "/v1/lingxing/pending-package/{import_token}",
+        dependencies=[Depends(require_local_auth)],
+    )
+    def pending_lingxing_package(import_token: str) -> dict:
+        try:
+            item = pending_packages.get(import_token)
+        except ConnectionPackageError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "package_name": item.source_name,
+            "expires_in_seconds": max(0, int(item.expires_at - time.time())),
+        }
+
     @app.post("/v1/lingxing/configure-package", dependencies=[Depends(require_local_auth)])
     def configure_lingxing_package(payload: LingxingPackageConfigureRequest) -> dict:
+        import_token = payload.import_token.get_secret_value()
         try:
-            connection = parse_connection_package_pair(
-                package_name=payload.package_name,
-                package_text=payload.package_text.get_secret_value(),
-                checksum_name=payload.checksum_name,
-                checksum_text=payload.checksum_text.get_secret_value(),
-            )
+            item = pending_packages.get(import_token)
         except ConnectionPackageError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         credentials = LingxingCredentials(
             app_id=payload.app_id,
             app_secret=payload.app_secret.get_secret_value(),
-            proxy_url=connection.proxy_url(),
+            proxy_url=item.connection.proxy_url(),
             auto_sync=payload.auto_sync,
             sync_interval_minutes=payload.sync_interval_minutes,
         )
@@ -127,8 +154,11 @@ def attach_lingxing(
         except Exception as exc:  # noqa: BLE001
             message = service.friendly_error(exc, credentials)
             raise HTTPException(status_code=400, detail=message) from exc
+
+        source_deleted = pending_packages.finish_and_delete(import_token)
         result["connection_package_imported"] = True
-        result["relay"] = {"host": connection.host, "port": connection.port}
+        result["source_deleted"] = source_deleted
+        result["relay"] = {"host": item.connection.host, "port": item.connection.port}
         return result
 
     @app.post("/v1/lingxing/sync", status_code=202, dependencies=[Depends(require_local_auth)])
