@@ -67,7 +67,7 @@ jobs:
         run: python -m pip_audit --strict --progress-spinner off -r requirements-build.txt
       - name: Build unified installer
         run: .\packaging\build_installer.ps1
-      - name: Verify install, frozen SDK, clean upgrade, file association and data retention
+      - name: Verify install, frozen SDK, real analysis, clean upgrade, association and data retention
         run: .\scripts\verify_windows_installer.ps1
       - name: Generate dependency license report
         run: |
