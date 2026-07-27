@@ -72,6 +72,17 @@ jobs:
         run: |
           $diagnostic = Join-Path $env:RUNNER_TEMP "windows-verification-error.txt"
           Remove-Item -LiteralPath $diagnostic -Force -ErrorAction SilentlyContinue
+
+          $verificationScript = ".\scripts\verify_windows_installer.ps1"
+          $scriptContent = Get-Content -LiteralPath $verificationScript -Raw
+          $oldLookup = '$property = $row.PSObject.Properties[$Name]'
+          $newLookup = '$property = $row.PSObject.Properties | Where-Object { $_.Name -eq $Name } | Select-Object -First 1'
+          if (-not $scriptContent.Contains($oldLookup)) {
+            throw "expected PowerShell metric lookup was not found"
+          }
+          $scriptContent.Replace($oldLookup, $newLookup) |
+            Set-Content -LiteralPath $verificationScript -Encoding utf8
+
           $sameOriginHeaders = @{
             Origin = "http://127.0.0.1:8766"
             Referer = "http://127.0.0.1:8766/"
