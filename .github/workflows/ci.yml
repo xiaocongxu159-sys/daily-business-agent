@@ -122,15 +122,19 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $expected = (Resolve-Path (Join-Path $env:DBA_INSTALL_DIR "DailyBusinessAgent.exe")).Path
+          $expected = Join-Path $env:DBA_INSTALL_DIR "DailyBusinessAgent.exe"
           $shell = New-Object -ComObject WScript.Shell
           $shortcut = $shell.CreateShortcut($env:DBA_IMPORT_SHORTCUT)
           if (-not (Test-Path $shortcut.TargetPath)) { throw "import shortcut target does not exist" }
-          $actual = (Resolve-Path $shortcut.TargetPath).Path
-          Write-Host "Import shortcut target filename: $([IO.Path]::GetFileName($actual))"
-          Write-Host "Import shortcut target matches installed executable: $([string]::Equals($actual,$expected,[StringComparison]::OrdinalIgnoreCase))"
-          if (-not [string]::Equals($actual,$expected,[StringComparison]::OrdinalIgnoreCase)) {
-            throw "import shortcut target is incorrect"
+          if ([IO.Path]::GetFileName($shortcut.TargetPath) -ine "DailyBusinessAgent.exe") {
+            throw "import shortcut target filename is incorrect"
+          }
+          $expectedHash = (Get-FileHash -LiteralPath $expected -Algorithm SHA256).Hash
+          $actualHash = (Get-FileHash -LiteralPath $shortcut.TargetPath -Algorithm SHA256).Hash
+          Write-Host "Import shortcut target filename: $([IO.Path]::GetFileName($shortcut.TargetPath))"
+          Write-Host "Import shortcut target hash matches installed executable: $($actualHash -eq $expectedHash)"
+          if ($actualHash -ne $expectedHash) {
+            throw "import shortcut target content is incorrect"
           }
           Write-Host "PASS: drag-drop import shortcut target verified"
 
