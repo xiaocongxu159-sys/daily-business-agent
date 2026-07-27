@@ -107,6 +107,7 @@ jobs:
           path: |
             ${{ runner.temp }}/windows-verification-error.txt
             ${{ runner.temp }}/http-analysis-*/**
+            ${{ runner.temp }}/DailyBusinessAgentData/jobs/**
             ${{ runner.temp }}/daily-business-agent-*.log
           if-no-files-found: warn
           retention-days: 7
