@@ -21,6 +21,24 @@ $exe = Join-Path $installDir "DailyBusinessAgent.exe"
 if (-not (Test-Path $exe)) { throw "installed executable missing" }
 Write-Host "PASS: candidate installed"
 
+$sdkRuntimeLog = Join-Path $env:RUNNER_TEMP "daily-business-agent-sdk-runtime.log"
+Remove-Item -LiteralPath $sdkRuntimeLog -Force -ErrorAction SilentlyContinue
+$previousCrashLog = $env:DAILY_BUSINESS_AGENT_CRASH_LOG
+$env:DAILY_BUSINESS_AGENT_CRASH_LOG = $sdkRuntimeLog
+try {
+  $sdkCheck = Start-Process $exe -ArgumentList @("--verify-sdk-runtime") -Wait -PassThru
+} finally {
+  $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $previousCrashLog
+}
+if ($sdkCheck.ExitCode -ne 0) {
+  if (Test-Path $sdkRuntimeLog) {
+    Write-Host "Frozen SDK runtime diagnostic:"
+    Get-Content -LiteralPath $sdkRuntimeLog
+  }
+  throw "installed executable cannot import Lingxing SDK: $($sdkCheck.ExitCode)"
+}
+Write-Host "PASS: installed executable imports Lingxing SDK runtime"
+
 $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\每日经营数据本地助手 后台同步.lnk"
 if (-not (Test-Path $startup)) { throw "startup shortcut missing" }
 Write-Host "PASS: startup shortcut exists"
