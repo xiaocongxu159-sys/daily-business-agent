@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from agent.frozen_runtime import (
@@ -38,8 +39,20 @@ def test_recover_stale_jobs_marks_failed_and_preserves_inputs(tmp_path: Path) ->
     assert input_path.is_file()
 
 
-def test_frozen_runtime_verifier_writes_excel_html_and_json(tmp_path: Path) -> None:
+def test_frozen_runtime_verifier_writes_outputs_and_preserves_metrics(tmp_path: Path) -> None:
     paths = verify_local_analysis_runtime(tmp_path)
     assert set(paths) == {"excel", "html", "json"}
     assert all(Path(path).is_file() for path in paths.values())
-    assert (tmp_path / "verification-result.json").is_file()
+
+    verification_path = tmp_path / "verification-result.json"
+    assert verification_path.is_file()
+    verification = json.loads(verification_path.read_text(encoding="utf-8"))
+    assert verification["totals"] == {
+        "rows": 1,
+        "sales": 39.98,
+        "orders": 2.0,
+        "sessions": 10.0,
+        "page_views": 12.0,
+        "ad_spend": 5.0,
+        "ad_sales": 19.99,
+    }
