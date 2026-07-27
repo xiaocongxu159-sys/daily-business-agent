@@ -84,7 +84,7 @@ jobs:
             "/NORESTART",
             "/SP-",
             "/DIR=$installDir",
-            "/TASKS=autostart,importshortcut"
+            "/TASKS=autostart"
           ) -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "installer failed: $($install.ExitCode)" }
           $exe = Join-Path $installDir "DailyBusinessAgent.exe"
