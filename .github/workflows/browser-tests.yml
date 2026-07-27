@@ -62,7 +62,15 @@ jobs:
       - name: Check rich dashboard charts and scrolling in Chromium
         env:
           RICH_DASHBOARD_ARTIFACT_DIR: ${{ runner.temp }}/rich-dashboard
-        run: python tests/browser_rich_dashboard.py
+        run: |
+          mkdir -p "$RICH_DASHBOARD_ARTIFACT_DIR"
+          set +e
+          python tests/browser_rich_dashboard.py \
+            > >(tee "$RICH_DASHBOARD_ARTIFACT_DIR/stdout.log") \
+            2> >(tee "$RICH_DASHBOARD_ARTIFACT_DIR/stderr.log" >&2)
+          status=$?
+          printf 'exit_code=%s\n' "$status" > "$RICH_DASHBOARD_ARTIFACT_DIR/exit-code.txt"
+          exit "$status"
       - name: Upload rich dashboard browser diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
