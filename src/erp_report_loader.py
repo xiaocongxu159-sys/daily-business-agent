@@ -69,6 +69,51 @@ def _read(path: Path) -> pd.DataFrame:
     return pd.read_excel(path, sheet_name=sheet, dtype=object)
 
 
+def _identity_values(frame: pd.DataFrame, column: str) -> set[str]:
+    if column not in frame.columns:
+        return set()
+    return {
+        str(value).strip()
+        for value in frame[column].dropna()
+        if str(value).strip()
+    }
+
+
+def _validate_mapping_identity_overlap(identity: pd.DataFrame, mapping_df) -> None:
+    """Reject an ERP file when none of its scoped offers can match the mapping.
+
+    A matching ASIN alone is not enough when one side uses MSKU and the other
+    uses seller-sku. Silently merging by the visible token can attach metrics to
+    the wrong offer in multi-store data, so the public Agent fails closed.
+    """
+    if mapping_df is None or getattr(mapping_df, "empty", True):
+        return
+
+    mapping = standardize_identity_fields(mapping_df, log_default=False)
+    mapping_offer_keys = _identity_values(mapping, "offer_key")
+    erp_offer_keys = _identity_values(identity, "offer_key")
+    if not mapping_offer_keys or not erp_offer_keys or mapping_offer_keys & erp_offer_keys:
+        return
+
+    mapping_product_keys = _identity_values(mapping, "product_key")
+    erp_product_keys = _identity_values(identity, "product_key")
+    product_overlap = bool(mapping_product_keys & erp_product_keys)
+    mapping_sources = _identity_values(mapping, "key_source")
+    erp_sources = _identity_values(identity, "key_source")
+
+    if product_overlap and "msku" in erp_sources and "msku" not in mapping_sources:
+        raise ValueError(
+            "ERP 报表使用 MSKU，但商品映射没有对应的 MSKU 身份。"
+            "请在商品映射中填写与 ERP 报表一致的 MSKU 列后重新分析；"
+            "系统不会仅凭相同 ASIN 或相同文本自动跨身份合并。"
+        )
+
+    raise ValueError(
+        "ERP 报表与商品映射没有可安全匹配的店铺、站点和 SKU/MSKU 身份。"
+        "请检查 shop_id、marketplace、MSKU 和 seller-sku 是否对应。"
+    )
+
+
 def load_erp_report(filepath, mapping_df=None):
     """Return ``(business_df, ad_df, errors)`` for one explicit ERP file."""
     path = Path(filepath)
@@ -104,6 +149,7 @@ def load_erp_report(filepath, mapping_df=None):
         return None, None, ["没有同时包含有效日期、ASIN 和 SKU/MSKU 的数据行"]
     identity = identity.loc[valid].reset_index(drop=True)
     raw = raw.loc[valid].reset_index(drop=True)
+    _validate_mapping_identity_overlap(identity, mapping_df)
 
     business = identity.copy()
     business["日期"] = identity["report_date"]
