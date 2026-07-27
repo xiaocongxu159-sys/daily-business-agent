@@ -122,18 +122,29 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $exe = Join-Path $env:DBA_INSTALL_DIR "DailyBusinessAgent.exe"
+          $expected = (Resolve-Path (Join-Path $env:DBA_INSTALL_DIR "DailyBusinessAgent.exe")).Path
           $shell = New-Object -ComObject WScript.Shell
           $shortcut = $shell.CreateShortcut($env:DBA_IMPORT_SHORTCUT)
-          Write-Host "Import shortcut target filename: $([IO.Path]::GetFileName($shortcut.TargetPath))"
-          Write-Host "Import shortcut has fixed arguments: $(-not [string]::IsNullOrWhiteSpace($shortcut.Arguments))"
-          if ([IO.Path]::GetFullPath($shortcut.TargetPath) -ne [IO.Path]::GetFullPath($exe)) {
+          if (-not (Test-Path $shortcut.TargetPath)) { throw "import shortcut target does not exist" }
+          $actual = (Resolve-Path $shortcut.TargetPath).Path
+          Write-Host "Import shortcut target filename: $([IO.Path]::GetFileName($actual))"
+          Write-Host "Import shortcut target matches installed executable: $([string]::Equals($actual,$expected,[StringComparison]::OrdinalIgnoreCase))"
+          if (-not [string]::Equals($actual,$expected,[StringComparison]::OrdinalIgnoreCase)) {
             throw "import shortcut target is incorrect"
           }
-          if (-not [string]::IsNullOrWhiteSpace($shortcut.Arguments)) {
+          Write-Host "PASS: drag-drop import shortcut target verified"
+
+      - name: Verify drag-drop import shortcut has no fixed arguments
+        shell: pwsh
+        run: |
+          $shell = New-Object -ComObject WScript.Shell
+          $shortcut = $shell.CreateShortcut($env:DBA_IMPORT_SHORTCUT)
+          $hasArguments = -not [string]::IsNullOrWhiteSpace($shortcut.Arguments)
+          Write-Host "Import shortcut has fixed arguments: $hasArguments"
+          if ($hasArguments) {
             throw "import shortcut must accept a dropped file without fixed arguments"
           }
-          Write-Host "PASS: drag-drop import shortcut target verified"
+          Write-Host "PASS: dropped .dba path will be supplied as the only argument"
 
       - name: Verify .dba file association
         shell: pwsh
