@@ -60,6 +60,16 @@ jobs:
       - name: Check dashboard rendered sales in Chromium
         run: python tests/browser_public_pages.py --check dashboard-render-sales
       - name: Check rich dashboard charts and scrolling in Chromium
+        env:
+          RICH_DASHBOARD_ARTIFACT_DIR: ${{ runner.temp }}/rich-dashboard
         run: python tests/browser_rich_dashboard.py
+      - name: Upload rich dashboard browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rich-dashboard-browser-${{ github.sha }}
+          path: ${{ runner.temp }}/rich-dashboard/**
+          if-no-files-found: warn
+          retention-days: 7
       - name: Check single-file Lingxing page in Chromium
         run: python tests/browser_lingxing_steps.py --check page
