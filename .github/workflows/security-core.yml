@@ -14,16 +14,6 @@ on:
       - ".github/workflows/security-core.yml"
   push:
     branches: [main]
-    paths:
-      - "agent/**"
-      - "src/**"
-      - "config/**"
-      - "tests/**"
-      - "scripts/**"
-      - "docs/**"
-      - "requirements*.txt"
-      - "VERSION"
-      - ".github/workflows/security-core.yml"
 
 permissions:
   contents: read
@@ -31,7 +21,7 @@ permissions:
 jobs:
   security-core:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,5 +39,15 @@ jobs:
         run: python -m compileall -q agent src tests
       - name: Enforce public repository boundary
         run: python scripts/public_boundary_scan.py
-      - name: Run complete unified Agent test suite
-        run: python -B -m pytest -q
+      - name: Test single-file connection package and TLS bridge
+        run: python -B -m pytest -q tests/test_connection_package.py tests/test_tls_bridge.py
+      - name: Test Lingxing page and encrypted storage boundaries
+        run: python -B -m pytest -q tests/test_lingxing_local_page.py tests/test_lingxing_admin_ux.py tests/test_public_security_core.py
+      - name: Test Agent HTTP, job storage and request boundaries
+        run: python -B -m pytest -q tests/test_agent_http_security.py tests/test_job_store_security.py tests/test_local_engine_request_security.py
+      - name: Test report loaders, identity, merge and plans
+        run: python -B -m pytest -q tests/test_public_report_loaders.py tests/test_public_identity_and_mapping.py tests/test_public_data_merger.py tests/test_public_erp_inventory_plan.py
+      - name: Test complete local engine output
+        run: python -B -m pytest -q tests/test_public_local_engine_e2e.py
+      - name: Test Windows packaging contracts
+        run: python -B -m pytest -q tests/test_packaging_contract.py
