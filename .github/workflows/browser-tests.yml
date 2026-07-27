@@ -68,8 +68,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rich-dashboard-browser-${{ github.sha }}
-          path: ${{ runner.temp }}/rich-dashboard/**
-          if-no-files-found: warn
+          path: ${{ runner.temp }}/rich-dashboard
+          if-no-files-found: error
           retention-days: 7
       - name: Check single-file Lingxing page in Chromium
         run: python tests/browser_lingxing_steps.py --check page

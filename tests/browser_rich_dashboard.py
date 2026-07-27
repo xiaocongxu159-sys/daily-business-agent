@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 import threading
+import traceback
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -52,81 +53,91 @@ def main() -> int:
     artifact_dir = Path(os.environ.get("RICH_DASHBOARD_ARTIFACT_DIR", tempfile.gettempdir()))
     artifact_dir.mkdir(parents=True, exist_ok=True)
     events: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="rich-dashboard-browser-") as temp:
-        root = Path(temp)
-        dashboard = _build(root)
-        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        external: list[str] = []
-        try:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True)
-                context = browser.new_context(viewport={"width": 1440, "height": 800})
-                def inspect_request(request) -> None:
-                    parsed = urlsplit(request.url)
-                    if parsed.scheme in {"data", "blob", "about"}:
-                        return
-                    if parsed.hostname not in {"127.0.0.1", "localhost"}:
-                        external.append(request.url)
-                context.on("request", inspect_request)
-                page = context.new_page()
-                page.on("console", lambda message: events.append(f"console[{message.type}]: {message.text}"))
-                page.on("pageerror", lambda error: events.append(f"pageerror: {error}"))
-                try:
-                    response = page.goto(
-                        f"http://127.0.0.1:{server.server_port}/{dashboard.name}",
-                        wait_until="domcontentloaded",
-                    )
-                    assert response is not None and response.status == 200
-                    page.wait_for_function(
-                        "() => ['trafficChart','salesChart','adsChart','inventoryChart'].every(id => document.querySelector('#'+id+' svg'))",
-                        timeout=15_000,
-                    )
-                    events.append("charts=4")
-                    assert "每日经营动态看板" in page.locator("h1").inner_text()
-                    assert "13020.00" in page.locator("#cards").inner_text()
-                    events.append("sales=13020.00")
-                    details = page.locator("#filterDetails")
-                    assert not details.evaluate("node => node.open")
-                    page.locator("#filterDetails > summary").click()
-                    assert details.evaluate("node => node.open")
-                    page.locator("#filterDetails > summary").click()
-                    assert not details.evaluate("node => node.open")
-                    events.append("filters=collapsed-expanded-collapsed")
-                    chart = page.locator("#trafficChart")
-                    chart.hover()
-                    before = page.evaluate("window.scrollY")
-                    maximum = page.evaluate("document.documentElement.scrollHeight - window.innerHeight")
-                    if before >= maximum - 5:
-                        page.mouse.wheel(0, -500)
-                        page.wait_for_timeout(300)
-                        after = page.evaluate("window.scrollY")
-                        assert after < before, (before, after, maximum)
-                    else:
-                        page.mouse.wheel(0, 500)
-                        page.wait_for_timeout(300)
-                        after = page.evaluate("window.scrollY")
-                        assert after > before, (before, after, maximum)
-                    events.append(f"wheel_before={before};wheel_after={after};max={maximum}")
-                    widths = chart.evaluate(
-                        "node => ({container:node.clientWidth,svg:node.querySelector('svg').getBoundingClientRect().width})"
-                    )
-                    assert widths["svg"] <= widths["container"] + 1, widths
-                    assert page.locator("#body").inner_text().count("Rich Product") >= 2
-                    assert not external, external
-                    events.append(f"widths={json.dumps(widths)}")
-                    page.screenshot(path=str(artifact_dir / "rich-dashboard-pass.png"), full_page=True)
-                finally:
-                    page.screenshot(path=str(artifact_dir / "rich-dashboard-final.png"), full_page=True)
-                    (artifact_dir / "rich-dashboard-events.txt").write_text("\n".join(events) + "\n", encoding="utf-8")
-                    context.close()
-                    browser.close()
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=10)
+    try:
+        with tempfile.TemporaryDirectory(prefix="rich-dashboard-browser-") as temp:
+            root = Path(temp)
+            dashboard = _build(root)
+            handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            external: list[str] = []
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    context = browser.new_context(viewport={"width": 1440, "height": 800})
+                    def inspect_request(request) -> None:
+                        parsed = urlsplit(request.url)
+                        if parsed.scheme in {"data", "blob", "about"}:
+                            return
+                        if parsed.hostname not in {"127.0.0.1", "localhost"}:
+                            external.append(request.url)
+                    context.on("request", inspect_request)
+                    page = context.new_page()
+                    page.on("console", lambda message: events.append(f"console[{message.type}]: {message.text}"))
+                    page.on("pageerror", lambda error: events.append(f"pageerror: {error}"))
+                    try:
+                        response = page.goto(
+                            f"http://127.0.0.1:{server.server_port}/{dashboard.name}",
+                            wait_until="domcontentloaded",
+                        )
+                        assert response is not None and response.status == 200
+                        page.wait_for_function(
+                            "() => ['trafficChart','salesChart','adsChart','inventoryChart'].every(id => document.querySelector('#'+id+' svg'))",
+                            timeout=15_000,
+                        )
+                        events.append("charts=4")
+                        assert "每日经营动态看板" in page.locator("h1").inner_text()
+                        assert "13020.00" in page.locator("#cards").inner_text()
+                        events.append("sales=13020.00")
+                        details = page.locator("#filterDetails")
+                        assert not details.evaluate("node => node.open")
+                        page.locator("#filterDetails > summary").click()
+                        assert details.evaluate("node => node.open")
+                        page.locator("#filterDetails > summary").click()
+                        assert not details.evaluate("node => node.open")
+                        events.append("filters=collapsed-expanded-collapsed")
+                        chart = page.locator("#trafficChart")
+                        chart.hover()
+                        before = page.evaluate("window.scrollY")
+                        maximum = page.evaluate("document.documentElement.scrollHeight - window.innerHeight")
+                        if before >= maximum - 5:
+                            page.mouse.wheel(0, -500)
+                            page.wait_for_timeout(300)
+                            after = page.evaluate("window.scrollY")
+                            assert after < before, (before, after, maximum)
+                        else:
+                            page.mouse.wheel(0, 500)
+                            page.wait_for_timeout(300)
+                            after = page.evaluate("window.scrollY")
+                            assert after > before, (before, after, maximum)
+                        events.append(f"wheel_before={before};wheel_after={after};max={maximum}")
+                        widths = chart.evaluate(
+                            "node => ({container:node.clientWidth,svg:node.querySelector('svg').getBoundingClientRect().width})"
+                        )
+                        assert widths["svg"] <= widths["container"] + 1, widths
+                        assert page.locator("#body").inner_text().count("Rich Product") >= 2
+                        assert not external, external
+                        events.append(f"widths={json.dumps(widths)}")
+                        page.screenshot(path=str(artifact_dir / "rich-dashboard-pass.png"), full_page=True)
+                    finally:
+                        try:
+                            page.screenshot(path=str(artifact_dir / "rich-dashboard-final.png"), full_page=True)
+                        except Exception as exc:
+                            events.append(f"screenshot_error={exc}")
+                        context.close()
+                        browser.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=10)
+    except Exception:
+        error_text = traceback.format_exc()
+        (artifact_dir / "rich-dashboard-error.txt").write_text(error_text, encoding="utf-8")
+        print(error_text, flush=True)
+        raise
+    finally:
+        (artifact_dir / "rich-dashboard-events.txt").write_text("\n".join(events) + "\n", encoding="utf-8")
     print("PASS: rich dashboard charts, filters, wheel scrolling and local-only network")
     return 0
 
