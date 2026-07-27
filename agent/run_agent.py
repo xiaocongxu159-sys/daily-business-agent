@@ -27,7 +27,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-root", type=Path, default=default_data_root())
     parser.add_argument("--allow-origin", action="append", default=[])
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument(
+        "--verify-sdk-runtime",
+        action="store_true",
+        help="Verify frozen Lingxing SDK imports and exit without reading user data.",
+    )
     return parser
+
+
+def verify_sdk_runtime() -> None:
+    """Fail closed when the packaged executable is missing an SDK dependency."""
+    try:
+        from aiohttp_socks import ProxyConnector
+        from lingxingapi import API
+    except ImportError as exc:
+        missing = str(getattr(exc, "name", "") or type(exc).__name__)
+        raise RuntimeError(f"Lingxing SDK runtime import failed: {missing}") from exc
+    if API is None or ProxyConnector is None:
+        raise RuntimeError("Lingxing SDK runtime import returned an invalid object")
 
 
 def _already_running(url: str) -> bool:
@@ -89,6 +106,10 @@ def _open_when_ready(
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.verify_sdk_runtime:
+        verify_sdk_runtime()
+        return
+
     origins = tuple(args.allow_origin) or (
         f"http://127.0.0.1:{args.port}",
         f"http://localhost:{args.port}",
