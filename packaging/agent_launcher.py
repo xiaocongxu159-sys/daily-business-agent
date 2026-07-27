@@ -40,6 +40,7 @@ def _runtime_verification_workspace(argv: list[str]) -> Path | None:
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     _ensure_standard_streams()
+    verification_mode = "--verify-local-analysis-runtime" in sys.argv[1:]
     try:
         from agent.frozen_runtime import (
             install_frozen_runtime_patches,
@@ -49,11 +50,14 @@ if __name__ == "__main__":
         verification_workspace = _runtime_verification_workspace(sys.argv[1:])
         if verification_workspace is not None:
             verify_local_analysis_runtime(verification_workspace)
-        else:
-            install_frozen_runtime_patches()
-            from agent.run_agent import main
+            os._exit(0)
 
-            main()
+        install_frozen_runtime_patches()
+        from agent.run_agent import main
+
+        main()
     except BaseException:
         _write_crash_log()
+        if verification_mode:
+            os._exit(1)
         raise
