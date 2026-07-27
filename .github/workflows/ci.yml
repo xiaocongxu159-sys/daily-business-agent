@@ -64,7 +64,8 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: .\packaging\build_installer.ps1
-      - name: Install and verify loopback, .dba association, import shortcut and data retention
+
+      - name: Install candidate
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -74,6 +75,8 @@ jobs:
           $dataDir = Join-Path $env:RUNNER_TEMP "DailyBusinessAgentData"
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
           Set-Content (Join-Path $dataDir "preserve-me.txt") "keep"
+          "DBA_INSTALL_DIR=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "DBA_DATA_DIR=$dataDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           $install = Start-Process $setup -ArgumentList @(
             "/VERYSILENT",
@@ -84,34 +87,62 @@ jobs:
             "/TASKS=autostart,importshortcut"
           ) -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "installer failed: $($install.ExitCode)" }
-
           $exe = Join-Path $installDir "DailyBusinessAgent.exe"
           if (-not (Test-Path $exe)) { throw "installed executable missing" }
+          Write-Host "PASS: candidate installed"
 
+      - name: Verify startup and drag-drop import shortcut
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = Join-Path $env:DBA_INSTALL_DIR "DailyBusinessAgent.exe"
           $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\每日经营数据本地助手 后台同步.lnk"
           if (-not (Test-Path $startup)) { throw "startup shortcut missing" }
 
           $desktop = [Environment]::GetFolderPath("Desktop")
           $importShortcut = Join-Path $desktop "导入每日经营连接包.lnk"
-          if (-not (Test-Path $importShortcut)) { throw "desktop import shortcut missing" }
+          if (-not (Test-Path $importShortcut)) {
+            Write-Host "Desktop resolved to: $desktop"
+            throw "desktop import shortcut missing"
+          }
           $shell = New-Object -ComObject WScript.Shell
           $shortcut = $shell.CreateShortcut($importShortcut)
+          Write-Host "Import shortcut target filename: $([IO.Path]::GetFileName($shortcut.TargetPath))"
           if ([IO.Path]::GetFullPath($shortcut.TargetPath) -ne [IO.Path]::GetFullPath($exe)) {
             throw "import shortcut target is incorrect"
           }
-          if ($shortcut.Arguments) { throw "import shortcut must accept a dropped file without fixed arguments" }
+          if (-not [string]::IsNullOrWhiteSpace($shortcut.Arguments)) {
+            throw "import shortcut must accept a dropped file without fixed arguments"
+          }
+          Write-Host "PASS: startup and drag-drop import shortcut verified"
 
+      - name: Verify .dba file association
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = Join-Path $env:DBA_INSTALL_DIR "DailyBusinessAgent.exe"
           $extensionKey = Get-Item "HKCU:\Software\Classes\.dba"
-          if ($extensionKey.GetValue("") -ne "DailyBusinessAgent.ConnectionPackage") {
+          $association = [string]$extensionKey.GetValue("")
+          Write-Host "Association ProgID: $association"
+          if ($association -ne "DailyBusinessAgent.ConnectionPackage") {
             throw ".dba file association missing"
           }
           $commandKey = Get-Item "HKCU:\Software\Classes\DailyBusinessAgent.ConnectionPackage\shell\open\command"
           $openCommand = [string]$commandKey.GetValue("")
-          if ($openCommand -notmatch [regex]::Escape($exe) -or $openCommand -notmatch '%1') {
+          Write-Host "Open command contains executable: $($openCommand.Contains($exe))"
+          Write-Host "Open command contains file placeholder: $($openCommand.Contains('%1'))"
+          if (-not $openCommand.Contains($exe) -or -not $openCommand.Contains('%1')) {
             throw ".dba open command is incorrect"
           }
+          Write-Host "PASS: .dba association verified"
 
-          $agent = Start-Process $exe -ArgumentList @("--no-browser","--data-root",$dataDir) -PassThru
+      - name: Verify loopback UI and hidden technical fields
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = (Get-Content -Raw "VERSION").Trim()
+          $exe = Join-Path $env:DBA_INSTALL_DIR "DailyBusinessAgent.exe"
+          $agent = Start-Process $exe -ArgumentList @("--no-browser","--data-root",$env:DBA_DATA_DIR) -PassThru
           try {
             $health = $null
             foreach ($attempt in 1..60) {
@@ -132,21 +163,30 @@ jobs:
             if ($listeners.LocalAddress | Where-Object { $_ -notin @("127.0.0.1","::1") }) {
               throw "non-loopback listener detected"
             }
+            Write-Host "PASS: loopback UI and hidden technical fields verified"
           } finally {
             Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue
           }
 
-          $uninstaller = Join-Path $installDir "unins000.exe"
+      - name: Uninstall and verify cleanup boundaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $uninstaller = Join-Path $env:DBA_INSTALL_DIR "unins000.exe"
           $uninstall = Start-Process $uninstaller -ArgumentList @(
             "/VERYSILENT",
             "/SUPPRESSMSGBOXES",
             "/NORESTART"
           ) -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "uninstaller failed" }
-          if (-not (Test-Path (Join-Path $dataDir "preserve-me.txt"))) { throw "user data deleted" }
+          if (-not (Test-Path (Join-Path $env:DBA_DATA_DIR "preserve-me.txt"))) {
+            throw "user data deleted"
+          }
           if (Test-Path "HKCU:\Software\Classes\DailyBusinessAgent.ConnectionPackage") {
             throw "file association was not removed by uninstall"
           }
+          Write-Host "PASS: uninstall preserved user data and removed association"
+
       - uses: actions/upload-artifact@v4
         with:
           name: DailyBusinessAgent-Windows-${{ github.sha }}
