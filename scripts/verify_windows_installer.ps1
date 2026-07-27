@@ -24,6 +24,54 @@ function Assert-SdkRuntime {
   }
 }
 
+function Assert-LocalAnalysisRuntime {
+  param(
+    [Parameter(Mandatory = $true)][string]$Executable,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+
+  $workspace = Join-Path $env:RUNNER_TEMP ("local-analysis-runtime-" + $Label)
+  $runtimeLog = Join-Path $env:RUNNER_TEMP ("local-analysis-runtime-" + $Label + ".log")
+  Remove-Item -LiteralPath $workspace -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $runtimeLog -Force -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $workspace | Out-Null
+
+  $previousCrashLog = $env:DAILY_BUSINESS_AGENT_CRASH_LOG
+  $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $runtimeLog
+  try {
+    $analysisCheck = Start-Process $Executable -ArgumentList @(
+      "--verify-local-analysis-runtime",
+      $workspace
+    ) -Wait -PassThru
+  } finally {
+    $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $previousCrashLog
+  }
+
+  if ($analysisCheck.ExitCode -ne 0) {
+    if (Test-Path $runtimeLog) {
+      Write-Host "Frozen local-analysis diagnostic:"
+      Get-Content -LiteralPath $runtimeLog
+    }
+    throw "installed executable cannot generate local analysis outputs: $($analysisCheck.ExitCode)"
+  }
+
+  $verificationPath = Join-Path $workspace "verification-result.json"
+  if (-not (Test-Path $verificationPath)) {
+    throw "frozen local-analysis verification result missing"
+  }
+  $verification = Get-Content -LiteralPath $verificationPath -Raw | ConvertFrom-Json
+  if ($verification.status -ne "success") {
+    throw "frozen local-analysis status was not success"
+  }
+  foreach ($property in @("excel", "html", "json")) {
+    $artifact = [string]$verification.$property
+    if ([string]::IsNullOrWhiteSpace($artifact) -or -not (Test-Path -LiteralPath $artifact)) {
+      throw "frozen local-analysis artifact missing: $property"
+    }
+  }
+  Write-Host "PASS: installed executable generated Excel, HTML and JSON ($Label)"
+}
+
 function Wait-AgentHealth {
   param([Parameter(Mandatory = $true)][string]$ExpectedVersion)
 
@@ -76,6 +124,7 @@ Write-Host "PASS: candidate installed"
 
 Assert-SdkRuntime -Executable $exe -LogName "daily-business-agent-sdk-runtime-first-install.log"
 Write-Host "PASS: clean-installed executable imports Lingxing SDK runtime"
+Assert-LocalAnalysisRuntime -Executable $exe -Label "first-install"
 
 $upgradeAgent = Start-Process $exe -ArgumentList @("--no-browser","--data-root",$dataDir) -PassThru
 Wait-AgentHealth -ExpectedVersion $version | Out-Null
@@ -94,6 +143,7 @@ if (-not (Test-Path (Join-Path $dataDir "preserve-me.txt"))) {
   throw "upgrade installer deleted user data"
 }
 Assert-SdkRuntime -Executable $exe -LogName "daily-business-agent-sdk-runtime-after-upgrade.log"
+Assert-LocalAnalysisRuntime -Executable $exe -Label "after-upgrade"
 Write-Host "PASS: stopped-Agent in-place upgrade cleaned stale runtime and preserved user data"
 
 $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\每日经营数据本地助手 后台同步.lnk"
