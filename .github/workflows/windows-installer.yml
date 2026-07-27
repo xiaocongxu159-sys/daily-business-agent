@@ -68,7 +68,26 @@ jobs:
       - name: Build unified installer
         run: .\packaging\build_installer.ps1
       - name: Verify install, frozen SDK, real analysis, clean upgrade, association and data retention
-        run: .\scripts\verify_windows_installer.ps1
+        run: |
+          $diagnostic = Join-Path $env:RUNNER_TEMP "windows-verification-error.txt"
+          Remove-Item -LiteralPath $diagnostic -Force -ErrorAction SilentlyContinue
+          try {
+            .\scripts\verify_windows_installer.ps1
+          } catch {
+            $_ | Format-List * -Force | Out-String | Set-Content -LiteralPath $diagnostic -Encoding utf8
+            throw
+          }
+      - name: Upload Windows verification diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-verification-diagnostic-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/windows-verification-error.txt
+            ${{ runner.temp }}/http-analysis-*/**
+            ${{ runner.temp }}/daily-business-agent-*.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Generate dependency license report
         run: |
           python -m piplicenses --format=markdown --with-urls --output-file=release/THIRD_PARTY_LICENSES.generated.md
