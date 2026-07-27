@@ -42,6 +42,15 @@ function Wait-AgentHealth {
   return $health
 }
 
+function Wait-PortReleased {
+  foreach ($attempt in 1..30) {
+    $listener = Get-NetTCPConnection -LocalPort 8766 -State Listen -ErrorAction SilentlyContinue
+    if (-not $listener) { return }
+    Start-Sleep -Milliseconds 500
+  }
+  throw "Agent port was not released after safe stop"
+}
+
 $version = (Get-Content -Raw "VERSION").Trim()
 $setup = (Resolve-Path "release\DailyBusinessAgent-Setup-$version.exe").Path
 $installDir = Join-Path $env:RUNNER_TEMP "DailyBusinessAgentApp"
@@ -72,15 +81,12 @@ $upgradeAgent = Start-Process $exe -ArgumentList @("--no-browser","--data-root",
 Wait-AgentHealth -ExpectedVersion $version | Out-Null
 $staleMarker = Join-Path $installDir "_internal\stale-upgrade-marker.txt"
 Set-Content -LiteralPath $staleMarker -Value "must be removed during upgrade"
+Stop-Process -Id $upgradeAgent.Id -Force
+Wait-Process -Id $upgradeAgent.Id -ErrorAction SilentlyContinue
+Wait-PortReleased
 
 $upgrade = Start-Process $setup -ArgumentList $installArgs -Wait -PassThru
 if ($upgrade.ExitCode -ne 0) { throw "in-place upgrade failed: $($upgrade.ExitCode)" }
-Start-Sleep -Seconds 2
-$upgradeAgent.Refresh()
-if (-not $upgradeAgent.HasExited) {
-  Stop-Process -Id $upgradeAgent.Id -Force -ErrorAction SilentlyContinue
-  throw "upgrade installer did not stop the running Agent"
-}
 if (Test-Path $staleMarker) {
   throw "upgrade installer did not clean the stale PyInstaller runtime directory"
 }
@@ -88,7 +94,7 @@ if (-not (Test-Path (Join-Path $dataDir "preserve-me.txt"))) {
   throw "upgrade installer deleted user data"
 }
 Assert-SdkRuntime -Executable $exe -LogName "daily-business-agent-sdk-runtime-after-upgrade.log"
-Write-Host "PASS: running-Agent in-place upgrade cleaned stale runtime and preserved user data"
+Write-Host "PASS: stopped-Agent in-place upgrade cleaned stale runtime and preserved user data"
 
 $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\每日经营数据本地助手 后台同步.lnk"
 if (-not (Test-Path $startup)) { throw "startup shortcut missing" }
@@ -119,10 +125,10 @@ if ($importLine -match 'Parameters:') {
 if (-not ($installerLines | Where-Object { $_ -eq 'Type: filesandordirs; Name: "{app}\_internal"' })) {
   throw "installer stale runtime cleanup contract missing"
 }
-if (-not ($installerLines | Where-Object { $_ -like 'function PrepareToInstall*' })) {
-  throw "installer running-Agent shutdown contract missing"
+if (-not ($installerLines | Where-Object { $_ -eq 'CloseApplicationsFilter={#MyAppExeName}' })) {
+  throw "installer close-application filter contract missing"
 }
-Write-Host "PASS: dropped .dba path and safe upgrade contracts verified"
+Write-Host "PASS: dropped .dba path and conservative upgrade contracts verified"
 
 $extensionKey = Get-Item "HKCU:\Software\Classes\.dba"
 $association = [string]$extensionKey.GetValue("")
