@@ -127,8 +127,15 @@ def _write_verification_progress(workspace: Path, stage: str) -> None:
     (workspace / "verification-progress.txt").write_text(stage + "\n", encoding="utf-8")
 
 
+def _number(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def verify_local_analysis_runtime(workspace: Path) -> dict[str, str]:
-    """Generate synthetic inputs and prove the frozen engine writes all outputs."""
+    """Generate synthetic inputs and prove the frozen engine preserves metrics."""
     workspace = Path(workspace).expanduser().resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     _write_verification_progress(workspace, "start")
@@ -152,6 +159,7 @@ def verify_local_analysis_runtime(workspace: Path) -> dict[str, str]:
                 "shop_name",
                 "marketplace",
                 "seller-sku",
+                "MSKU",
                 "asin1",
                 "item-name",
                 "quantity",
@@ -162,6 +170,7 @@ def verify_local_analysis_runtime(workspace: Path) -> dict[str, str]:
                 "SYNTHETIC-STORE",
                 "Synthetic Store",
                 "US",
+                "SYNTH-SKU-1",
                 "SYNTH-SKU-1",
                 "B000TEST01",
                 "Synthetic Product",
@@ -175,6 +184,8 @@ def verify_local_analysis_runtime(workspace: Path) -> dict[str, str]:
         [
             {
                 "日期": "2026-07-27",
+                "shop_id": "SYNTHETIC-STORE",
+                "marketplace": "US",
                 "ASIN": "B000TEST01",
                 "MSKU": "SYNTH-SKU-1",
                 "标题": "Synthetic Product",
@@ -212,9 +223,46 @@ def verify_local_analysis_runtime(workspace: Path) -> dict[str, str]:
     if result.status != "success" or not all(Path(path).is_file() for path in paths.values()):
         raise RuntimeError("frozen local analysis did not create Excel, HTML and JSON")
 
+    _write_verification_progress(workspace, "checking-dashboard-metrics")
+    payload = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
+    daily = payload.get("daily") or []
+    totals = {
+        "rows": len(daily),
+        "sales": sum(_number(row.get("销售额")) for row in daily),
+        "orders": sum(_number(row.get("总订单")) for row in daily),
+        "sessions": sum(_number(row.get("Sessions")) for row in daily),
+        "page_views": sum(_number(row.get("PV")) for row in daily),
+        "ad_spend": sum(_number(row.get("广告花费")) for row in daily),
+        "ad_sales": sum(_number(row.get("广告销售额")) for row in daily),
+    }
+    expected = {
+        "rows": 1,
+        "sales": 39.98,
+        "orders": 2.0,
+        "sessions": 10.0,
+        "page_views": 12.0,
+        "ad_spend": 5.0,
+        "ad_sales": 19.99,
+    }
+    mismatched = [
+        name
+        for name, value in expected.items()
+        if abs(float(totals[name]) - float(value)) > 0.001
+    ]
+    if mismatched:
+        raise RuntimeError(
+            "frozen local analysis created files but lost ERP metrics: "
+            + ", ".join(mismatched)
+        )
+
     verification = workspace / "verification-result.json"
     verification.write_text(
-        json.dumps({"status": result.status, **paths}, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(
+            {"status": result.status, **paths, "totals": totals},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     _write_verification_progress(workspace, "complete")
