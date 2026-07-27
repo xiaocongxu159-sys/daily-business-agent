@@ -5,11 +5,16 @@ import functools
 import http.server
 import json
 import os
+import sys
 import tempfile
 import threading
 import traceback
 from pathlib import Path
 from urllib.parse import urlsplit
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import pandas as pd
 from playwright.sync_api import sync_playwright
