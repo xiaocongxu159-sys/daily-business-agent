@@ -63,6 +63,9 @@ def test_installer_preserves_accepted_upgrade_paths_and_single_file_association(
 
 
 def test_public_packaging_contains_no_private_server_material() -> None:
+    # The scanner itself intentionally contains the forbidden regex patterns, so
+    # only distributable/build files are checked here. The full repository is
+    # independently checked by scripts/public_boundary_scan.py.
     combined = "\n".join(
         read(relative)
         for relative in (
@@ -70,7 +73,6 @@ def test_public_packaging_contains_no_private_server_material() -> None:
             "packaging/DailyBusinessAgent.spec",
             "packaging/build_installer.ps1",
             "packaging/installer.iss",
-            "scripts/public_boundary_scan.py",
         )
     )
     forbidden = (
