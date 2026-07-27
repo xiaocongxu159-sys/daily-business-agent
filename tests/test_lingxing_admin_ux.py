@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Static UX contract for beginner-safe Lingxing configuration."""
+"""Static UX contract for the single-file Lingxing setup page."""
 from __future__ import annotations
 
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / "agent" / "static" / "lingxing.html"
@@ -13,31 +12,24 @@ def page_text() -> str:
     return PAGE.read_text(encoding="utf-8")
 
 
-def test_admin_network_settings_are_nested_and_closed_by_default() -> None:
+def test_page_uses_single_file_beginner_flow() -> None:
     html = page_text()
-    assert '<details id="admin-settings"' in html
-    assert '<details id="admin-settings" open' not in html
-    assert "管理员高级设置（普通用户无需填写）" in html
+    assert "单文件私人连接包" in html
+    assert "双击服务器生成的" in html
+    assert "测试连接、安全保存并删除连接包" in html
+    assert 'id="package-ready"' in html
 
 
-def test_page_explains_beginner_boundary() -> None:
+def test_page_hides_technical_connection_fields() -> None:
     html = page_text()
-    assert "普通用户只需要准备自己的领星 AppID 和 AppSecret" in html
-    assert "请联系企业管理员" in html
-    assert "无法从领星后台或 Windows 设置中找到" in html
-    assert "未配置领星也不影响手工报表分析" in html
+    assert 'id="proxy-url"' not in html
+    assert 'type="file"' not in html
+    assert "证书指纹和内部完整性信息不会显示" in html
+    assert "tls+http://用户名" not in html
 
 
-def test_missing_admin_egress_is_blocked_before_api_submission() -> None:
+def test_source_deletion_is_only_claimed_after_success() -> None:
     html = page_text()
-    assert 'if(!proxyUrl)' in html
-    assert '$("admin-settings").open=true' in html
-    assert "尚未配置企业管理员固定出口" in html
-    assert 'proxy_url:proxyUrl' in html
-
-
-def test_advanced_field_does_not_claim_to_be_lingxing_credentials() -> None:
-    html = page_text()
-    assert "这不是领星账号信息" in html
-    assert "普通用户不要自行拼接" in html
-    assert "tls+http://用户名:密码@服务器:端口?sha256=64位证书指纹" in html
+    assert "连接成功后将自动删除原文件" in html
+    assert "Windows 未能删除原始 .dba 文件" in html
+    assert "请手动删除该文件" in html

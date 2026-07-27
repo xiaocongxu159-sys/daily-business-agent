@@ -1,14 +1,17 @@
+#ifndef MyAppVersion
+  #error MyAppVersion must be supplied by the build script
+#endif
 #define MyAppName "每日经营数据本地助手"
-#define MyAppVersion "0.1.0"
-#define MyAppPublisher "xiaocongxu159-sys"
+#define MyAppPublisher "CTJFyrdian"
 #define MyAppExeName "DailyBusinessAgent.exe"
+#define MyPackageProgId "DailyBusinessAgent.ConnectionPackage"
 
 [Setup]
-AppId={{A02B2384-797D-4BF0-9012-CDDBB9894897}
+AppId={{D911E479-4920-4F7F-857B-6BD88419BD73}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Programs\DailyBusinessAgent
+DefaultDirName={localappdata}\CTJFyrdian\DailyBusinessAgentApp
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -21,9 +24,10 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
+CloseApplicationsFilter={#MyAppExeName}
 RestartApplications=no
 SetupLogging=yes
-ChangesAssociations=no
+ChangesAssociations=yes
 VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} 安装程序
@@ -31,7 +35,11 @@ VersionInfoProductName={#MyAppName}
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加选项："; Flags: unchecked
-Name: "startup"; Description: "Windows 登录后自动启动"; GroupDescription: "附加选项："; Flags: checkedonce
+Name: "autostart"; Description: "Windows 登录后自动启动并检查领星更新"; GroupDescription: "自动同步："; Flags: checkedonce
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\{#MyAppExeName}"
 
 [Files]
 Source: "..\dist\DailyBusinessAgent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -39,7 +47,14 @@ Source: "..\dist\DailyBusinessAgent\*"; DestDir: "{app}"; Flags: ignoreversion r
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
-Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: startup
+Name: "{autodesktop}\导入每日经营连接包"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Comment: "把 .dba 文件拖到这里，或直接双击 .dba 文件"
+Name: "{userstartup}\{#MyAppName} 后台同步"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--no-browser"; WorkingDir: "{app}"; Tasks: autostart
+
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\.dba"; ValueType: string; ValueName: ""; ValueData: "{#MyPackageProgId}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\{#MyPackageProgId}"; ValueType: string; ValueName: ""; ValueData: "Daily Business Agent 私人连接包"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\{#MyPackageProgId}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKCU; Subkey: "Software\Classes\{#MyPackageProgId}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "安装完成后启动本地助手"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
@@ -47,5 +62,4 @@ Filename: "{app}\{#MyAppExeName}"; Description: "安装完成后启动本地助�
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#MyAppExeName} /F >NUL 2>&1"; Flags: runhidden; RunOnceId: "StopAgent"
 
-; 用户数据保存在 %LOCALAPPDATA%\DailyBusinessAgent。
-; 卸载程序只删除应用文件，不删除用户原始文件、任务历史、加密配置或生成结果。
+; 用户数据保存在 %LOCALAPPDATA%\CTJFyrdian\DailyBusinessAgent，升级和卸载都不会删除。

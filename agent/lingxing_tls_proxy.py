@@ -1,27 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Pinned outer-TLS bridge for the Lingxing fixed-egress proxy.
-
-The Lingxing API HTTPS session remains end-to-end encrypted. This bridge only
-adds a second TLS layer between the Windows Agent and the fixed-egress server so
-proxy credentials and CONNECT metadata are not sent over the public network in
-plain text.
-"""
+"""Pinned outer-TLS bridge for the Lingxing fixed-egress relay."""
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import hmac
+import select
 import socket
 import ssl
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from agent.lingxing_secure_store import LingxingCredentials
 from agent.lingxing_service import LingxingProvider, LingxingSyncService
-
 
 _LOCAL_PROXY_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -61,6 +54,8 @@ def parse_tls_proxy_url(value: str) -> TlsProxyTarget:
     if len(fingerprint_values) != 1:
         raise ValueError("固定出口 TLS 地址必须包含唯一的 sha256 证书指纹")
     server_name_values = query.get("server_name", [])
+    if len(server_name_values) > 1:
+        raise ValueError("固定出口 TLS 地址只能包含一个 server_name")
     server_name = server_name_values[0].strip() if server_name_values else parsed.hostname
     if not server_name:
         raise ValueError("固定出口 TLS server_name 不能为空")
@@ -90,8 +85,6 @@ def validate_secure_proxy_url(value: str) -> str:
 
 
 class TlsProxyBridge:
-    """Expose a temporary loopback HTTP proxy and relay it over pinned TLS."""
-
     def __init__(self, proxy_url: str):
         self.target = parse_tls_proxy_url(proxy_url)
         self._stop = threading.Event()
@@ -107,9 +100,10 @@ class TlsProxyBridge:
         if self._listener is None:
             raise RuntimeError("TLS proxy bridge has not started")
         port = int(self._listener.getsockname()[1])
-        username = quote(self.target.username, safe="")
-        password = quote(self.target.password, safe="")
-        return f"http://{username}:{password}@127.0.0.1:{port}"
+        return (
+            f"http://{quote(self.target.username, safe='')}:{quote(self.target.password, safe='')}"
+            f"@127.0.0.1:{port}"
+        )
 
     def start(self) -> "TlsProxyBridge":
         if self._listener is not None:
@@ -121,9 +115,7 @@ class TlsProxyBridge:
         listener.settimeout(0.5)
         self._listener = listener
         self._accept_thread = threading.Thread(
-            target=self._accept_loop,
-            name="lingxing-tls-proxy-accept",
-            daemon=True,
+            target=self._accept_loop, name="lingxing-tls-proxy-accept", daemon=True
         )
         self._accept_thread.start()
         return self
@@ -177,7 +169,6 @@ class TlsProxyBridge:
     def _handle_client(self, client: socket.socket) -> None:
         remote: socket.socket | None = None
         tls_socket: ssl.SSLSocket | None = None
-        done = threading.Event()
         try:
             remote = socket.create_connection((self.target.host, self.target.port), timeout=15)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -189,23 +180,12 @@ class TlsProxyBridge:
             actual = hashlib.sha256(certificate or b"").hexdigest()
             if not hmac.compare_digest(actual, self.target.certificate_sha256):
                 raise ssl.SSLError("固定出口 TLS 证书指纹不匹配")
-            client.settimeout(1.0)
-            tls_socket.settimeout(1.0)
             with self._lock:
                 self._active_sockets.update({client, tls_socket})
-            upstream = threading.Thread(
-                target=self._pump,
-                args=(client, tls_socket, done),
-                name="lingxing-tls-proxy-upstream",
-                daemon=True,
-            )
-            upstream.start()
-            self._pump(tls_socket, client, done)
-            upstream.join(timeout=2)
-        except Exception as exc:  # noqa: BLE001 - connection boundary
+            self._relay_bidirectional(client, tls_socket)
+        except Exception as exc:  # noqa: BLE001
             self.last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
         finally:
-            done.set()
             with self._lock:
                 self._active_sockets.discard(client)
                 if tls_socket is not None:
@@ -217,24 +197,61 @@ class TlsProxyBridge:
                     except OSError:
                         pass
 
-    def _pump(self, source: socket.socket, destination: socket.socket, done: threading.Event) -> None:
-        try:
-            while not self._stop.is_set() and not done.is_set():
+    def _relay_bidirectional(self, client: socket.socket, tls_socket: ssl.SSLSocket) -> None:
+        """Relay both directions in one thread to avoid concurrent SSLSocket access."""
+        client.setblocking(False)
+        tls_socket.setblocking(False)
+        peers = {client: tls_socket, tls_socket: client}
+        pending = {client: bytearray(), tls_socket: bytearray()}
+        read_open = {client, tls_socket}
+        close_after_flush: set[socket.socket] = set()
+        max_pending = 1024 * 1024
+
+        while not self._stop.is_set():
+            if not read_open and not any(pending.values()):
+                return
+            read_list = [
+                source for source in read_open
+                if len(pending[peers[source]]) < max_pending
+            ]
+            write_list = [destination for destination, data in pending.items() if data]
+            try:
+                readable, writable, _ = select.select(read_list, write_list, [], 0.5)
+            except (OSError, ValueError):
+                return
+
+            for source in readable:
                 try:
                     chunk = source.recv(64 * 1024)
-                except socket.timeout:
+                except (BlockingIOError, ssl.SSLWantReadError, ssl.SSLWantWriteError):
                     continue
+                except (OSError, ssl.SSLError):
+                    return
                 if not chunk:
-                    break
-                destination.sendall(chunk)
-        except (OSError, ssl.SSLError):
-            pass
-        finally:
-            done.set()
-            try:
-                destination.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
+                    read_open.discard(source)
+                    close_after_flush.add(peers[source])
+                    continue
+                pending[peers[source]].extend(chunk)
+
+            for destination in writable:
+                data = pending[destination]
+                if not data:
+                    continue
+                try:
+                    sent = destination.send(data)
+                except (BlockingIOError, ssl.SSLWantReadError, ssl.SSLWantWriteError):
+                    continue
+                except (OSError, ssl.SSLError):
+                    return
+                if sent <= 0:
+                    return
+                del data[:sent]
+                if not data and destination in close_after_flush:
+                    close_after_flush.discard(destination)
+                    try:
+                        destination.shutdown(socket.SHUT_WR)
+                    except OSError:
+                        pass
 
 
 @contextmanager
@@ -248,8 +265,6 @@ def secure_proxy_endpoint(proxy_url: str):
 
 
 class TlsSdkLingxingProvider:
-    """Lingxing SDK adapter that requires pinned outer TLS for remote relays."""
-
     def list_shops(self, credentials: LingxingCredentials) -> list[dict]:
         return asyncio.run(self._list_shops(credentials))
 
@@ -257,7 +272,7 @@ class TlsSdkLingxingProvider:
         try:
             from aiohttp_socks import ProxyConnector
             from lingxingapi import API
-        except ImportError as exc:  # pragma: no cover - packaging CI catches this
+        except ImportError as exc:  # pragma: no cover
             raise RuntimeError("领星 SDK 未正确安装") from exc
 
         with secure_proxy_endpoint(credentials.proxy_url) as local_proxy_url:
@@ -291,28 +306,27 @@ class TlsSdkLingxingProvider:
                         "status", "ads_authorized",
                     )
                 }
-            shops.append({
-                "mid": values.get("mid"),
-                "sid": values.get("sid"),
-                "seller_id": str(values.get("seller_id") or ""),
-                "seller_name": str(values.get("seller_name") or values.get("name") or ""),
-                "account_id": values.get("account_id") or values.get("seller_account_id"),
-                "account_name": str(values.get("account_name") or ""),
-                "marketplace_id": str(values.get("marketplace_id") or ""),
-                "region": str(values.get("region") or ""),
-                "country": str(values.get("country") or ""),
-                "status": values.get("status"),
-                "ads_authorized": bool(values.get("ads_authorized") or values.get("has_ads_setting")),
-            })
+            shops.append(
+                {
+                    "mid": values.get("mid"),
+                    "sid": values.get("sid"),
+                    "seller_id": str(values.get("seller_id") or ""),
+                    "seller_name": str(values.get("seller_name") or values.get("name") or ""),
+                    "account_id": values.get("account_id") or values.get("seller_account_id"),
+                    "account_name": str(values.get("account_name") or ""),
+                    "marketplace_id": str(values.get("marketplace_id") or ""),
+                    "region": str(values.get("region") or ""),
+                    "country": str(values.get("country") or ""),
+                    "status": values.get("status"),
+                    "ads_authorized": bool(values.get("ads_authorized") or values.get("has_ads_setting")),
+                }
+            )
         return shops
 
 
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 class TlsLingxingSyncService(LingxingSyncService):
-    """Lingxing sync service that rejects unencrypted remote proxy addresses."""
+    def __init__(self, store, provider_factory=TlsSdkLingxingProvider, **kwargs):
+        super().__init__(store, provider_factory=provider_factory, **kwargs)
 
     def save_and_test(self, credentials: LingxingCredentials) -> dict:
         credentials = LingxingCredentials(
@@ -322,19 +336,4 @@ class TlsLingxingSyncService(LingxingSyncService):
             auto_sync=credentials.auto_sync,
             sync_interval_minutes=int(credentials.sync_interval_minutes),
         ).validated()
-        shops = self.provider_factory().list_shops(credentials)
-        if not isinstance(shops, list):
-            raise TypeError("领星店铺接口返回格式不正确")
-        self.store.save_credentials(credentials)
-        self.store.save_shops(shops)
-        state = self.store.load_state()
-        state.update({
-            "status": "success",
-            "message": f"领星连接验证成功，共获取 {len(shops)} 个店铺。",
-            "last_success_at": _utc_now(),
-            "last_error": "",
-            "shops_count": len(shops),
-            "transport": "pinned_outer_tls",
-        })
-        self.store.save_state(state)
-        return self.public_status()
+        return super().save_and_test(credentials)

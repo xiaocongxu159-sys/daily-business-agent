@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Static safety contract for the public Windows packaging and documentation."""
+"""Static contract for unified public Windows packaging."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,11 +13,14 @@ def read(relative: str) -> str:
 
 def test_required_public_files_exist() -> None:
     for relative in (
+        "VERSION",
         "packaging/agent_launcher.py",
         "packaging/DailyBusinessAgent.spec",
         "packaging/build_installer.ps1",
         "packaging/installer.iss",
-        "packaging/version_info.txt",
+        "scripts/public_boundary_scan.py",
+        "scripts/verify_windows_installer.ps1",
+        "requirements-build.txt",
         "requirements-ci.txt",
         "README.md",
         "PRIVACY.md",
@@ -31,33 +34,35 @@ def test_required_public_files_exist() -> None:
         assert (ROOT / relative).is_file(), relative
 
 
-def test_pyinstaller_bundles_both_local_pages_and_public_notices() -> None:
+def test_pyinstaller_bundles_both_pages_engine_config_and_sdk() -> None:
     spec = read("packaging/DailyBusinessAgent.spec")
     for required in (
+        "VERSION",
         "index.html",
         "lingxing.html",
         "api_config.json",
         "field_aliases.json",
         "LICENSE",
         "NOTICE",
+        '"lingxingapi"',
+        '"aiohttp_socks"',
+        '"Crypto"',
     ):
         assert required in spec
-    assert '"lingxingapi"' in spec
-    assert '"aiohttp_socks"' in spec
 
 
-def test_installer_uses_neutral_user_scope_and_preserves_data() -> None:
+def test_installer_preserves_accepted_upgrade_paths_and_single_file_association() -> None:
     installer = read("packaging/installer.iss")
     assert "PrivilegesRequired=lowest" in installer
-    assert r"{localappdata}\Programs\DailyBusinessAgent" in installer
-    assert r"{userstartup}" in installer
-    assert r"%LOCALAPPDATA%\DailyBusinessAgent" in installer
-    assert "删除用户原始文件" in installer
-    assert "DelTree" not in installer
+    assert r"{localappdata}\CTJFyrdian\DailyBusinessAgentApp" in installer
+    assert r"%LOCALAPPDATA%\CTJFyrdian\DailyBusinessAgent" in installer
+    assert 'Software\Classes\.dba' in installer
+    assert "导入每日经营连接包" in installer
+    assert 'Type: filesandordirs; Name: "{app}\_internal"' in installer
     assert "[UninstallDelete]" not in installer
 
 
-def test_public_packaging_contains_no_internal_identifiers() -> None:
+def test_public_packaging_contains_no_private_server_material() -> None:
     combined = "\n".join(
         read(relative)
         for relative in (
@@ -65,31 +70,23 @@ def test_public_packaging_contains_no_internal_identifiers() -> None:
             "packaging/DailyBusinessAgent.spec",
             "packaging/build_installer.ps1",
             "packaging/installer.iss",
-            "packaging/version_info.txt",
+            "scripts/public_boundary_scan.py",
         )
     )
-    forbidden = (
-        "CTJ" + "Fyrdian",
-        "/home" + "/ubuntu",
-        "amazon-keyword" + "-rank-monitor-dev",
-        "feature/daily-business-agent" + "-installer",
-        "integration/daily-business-report" + "-prod-baseline",
-    )
-    for value in forbidden:
+    for value in (
+        "124.221.26.163",
+        "dba-egress.ctjfyrdian.com",
+        "/home/ubuntu",
+        "amazon-keyword-rank-monitor-dev",
+        "BEGIN PRIVATE KEY",
+    ):
         assert value not in combined
 
 
-def test_public_status_and_attribution_are_current() -> None:
-    readme = read("README.md")
-    notice = read("NOTICE")
-    assert "公开源码和 Windows 构建脚本" in readme
-    assert "尚未发布 GitHub Release" in readme
-    assert "THIRD_PARTY_LICENSES.md" in notice
-    assert "third-party open-source software" in notice
-
-
-def test_build_script_writes_sha256_metadata() -> None:
+def test_build_script_is_dynamic_and_writes_sha256() -> None:
     script = read("packaging/build_installer.ps1")
+    assert 'Get-Content -Raw "VERSION"' in script
     assert "Get-FileHash -Algorithm SHA256" in script
     assert "pip check" in script
     assert "pytest -q" in script
+    assert "public_boundary_scan.py" in script

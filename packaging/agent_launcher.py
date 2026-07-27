@@ -12,7 +12,6 @@ from agent.run_agent import main
 
 
 def _ensure_standard_streams() -> None:
-    """PyInstaller windowed builds may expose stdout and stderr as None."""
     for name in ("stdout", "stderr"):
         if getattr(sys, name, None) is None:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))

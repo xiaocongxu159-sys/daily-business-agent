@@ -16,10 +16,25 @@ hiddenimports = [
     "uvicorn.lifespan.on",
     "uvicorn.lifespan.off",
 ]
-for package in ("lingxingapi", "aiohttp", "aiohttp_socks", "python_socks"):
-    hiddenimports.extend(collect_submodules(package))
+for package in (
+    "lingxingapi",
+    "aiohttp",
+    "aiohttp_socks",
+    "python_socks",
+    "Crypto",
+    "asyncssh",
+    "cytimes",
+    "orjson",
+):
+    try:
+        hiddenimports.extend(collect_submodules(package))
+    except Exception:
+        pass
+
+hiddenimports = sorted(set(hiddenimports))
 
 datas = [
+    (str(ROOT / "VERSION"), "."),
     (str(ROOT / "agent" / "static" / "index.html"), "agent/static"),
     (str(ROOT / "agent" / "static" / "lingxing.html"), "agent/static"),
     (str(ROOT / "config" / "api_config.json"), "config"),
@@ -32,12 +47,13 @@ try:
 except Exception:
     pass
 
+
 a = Analysis(
     [str(ROOT / "packaging" / "agent_launcher.py")],
     pathex=[str(ROOT)],
     binaries=[],
     datas=datas,
-    hiddenimports=sorted(set(hiddenimports)),
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

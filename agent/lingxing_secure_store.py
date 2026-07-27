@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Windows-local encrypted storage for Lingxing credentials and sync state.
-
-The encrypted credential file is protected with Windows DPAPI and can only be
-decrypted by the same Windows user account. Non-secret sync state and the
-sanitized shop list are stored beside it so the UI can show the last successful
-result immediately while a background refresh is running.
-"""
+"""Windows-local encrypted storage for Lingxing credentials and sync state."""
 from __future__ import annotations
 
 import base64
@@ -62,7 +56,8 @@ class WindowsDpapiProtector:
     """Protect secrets for the current Windows user with DPAPI."""
 
     _CRYPTPROTECT_UI_FORBIDDEN = 0x01
-    _entropy = b"DailyBusinessAgent.Lingxing.v1"
+    # Kept stable for compatibility with previously created Windows credentials.
+    _entropy = b"CTJFyrdian.DailyBusinessAgent.Lingxing.v1"
 
     def __init__(self) -> None:
         if os.name != "nt":
@@ -155,8 +150,6 @@ def _atomic_write(path: Path, content: bytes) -> None:
 
 
 class LingxingLocalStore:
-    """Own all Lingxing files under the local Agent data directory."""
-
     def __init__(self, data_root: Path, protector: SecretProtector | None = None):
         self.root = Path(data_root).resolve() / "lingxing"
         self.credentials_path = self.root / "credentials.dpapi"
@@ -165,18 +158,14 @@ class LingxingLocalStore:
         self._protector = protector
 
     def _get_protector(self) -> SecretProtector:
-        if self._protector is not None:
-            return self._protector
-        return WindowsDpapiProtector()
+        return self._protector or WindowsDpapiProtector()
 
     def has_credentials(self) -> bool:
         return self.credentials_path.is_file()
 
     def save_credentials(self, credentials: LingxingCredentials) -> None:
         payload = json.dumps(
-            asdict(credentials.validated()),
-            ensure_ascii=False,
-            separators=(",", ":"),
+            asdict(credentials.validated()), ensure_ascii=False, separators=(",", ":")
         ).encode("utf-8")
         protected = self._get_protector().protect(payload)
         envelope = {
@@ -189,31 +178,34 @@ class LingxingLocalStore:
             raise RuntimeError("credential encryption failed closed")
         _atomic_write(self.credentials_path, encoded)
         state = self.load_state()
-        state.update({
-            "configured": True,
-            "app_id_hint": self._mask_app_id(credentials.app_id),
-            "auto_sync": credentials.auto_sync,
-            "sync_interval_minutes": credentials.sync_interval_minutes,
-            "updated_at": _utc_now(),
-        })
+        state.update(
+            {
+                "configured": True,
+                "app_id_hint": self._mask_app_id(credentials.app_id),
+                "auto_sync": credentials.auto_sync,
+                "sync_interval_minutes": credentials.sync_interval_minutes,
+                "updated_at": _utc_now(),
+            }
+        )
         self.save_state(state)
 
     def load_credentials(self) -> LingxingCredentials:
         envelope = json.loads(self.credentials_path.read_text(encoding="utf-8"))
         protected = base64.b64decode(envelope["ciphertext"], validate=True)
         payload = self._get_protector().unprotect(protected)
-        values = json.loads(payload.decode("utf-8"))
-        return LingxingCredentials(**values).validated()
+        return LingxingCredentials(**json.loads(payload.decode("utf-8"))).validated()
 
     def disconnect(self) -> None:
         self.credentials_path.unlink(missing_ok=True)
         state = self.load_state()
-        state.update({
-            "configured": False,
-            "status": "disconnected",
-            "message": "领星连接已断开，本地历史店铺数据仍保留。",
-            "updated_at": _utc_now(),
-        })
+        state.update(
+            {
+                "configured": False,
+                "status": "disconnected",
+                "message": "领星连接已断开，本地历史店铺数据仍保留。",
+                "updated_at": _utc_now(),
+            }
+        )
         state.pop("app_id_hint", None)
         self.save_state(state)
 
@@ -247,7 +239,15 @@ class LingxingLocalStore:
 
     def save_state(self, state: dict) -> None:
         safe = dict(state)
-        for forbidden in ("app_id", "app_secret", "proxy_url", "access_token", "refresh_token"):
+        for forbidden in (
+            "app_id",
+            "app_secret",
+            "proxy_url",
+            "access_token",
+            "refresh_token",
+            "certificate_sha256",
+            "relay_password",
+        ):
             safe.pop(forbidden, None)
         safe["configured"] = self.has_credentials()
         safe["shops_count"] = len(self.load_shops())

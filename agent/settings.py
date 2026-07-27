@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Local-agent settings with a strict loopback-only network boundary."""
+"""Local-agent settings with stable Windows upgrade compatibility."""
 from __future__ import annotations
 
 import os
@@ -12,8 +12,10 @@ LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 def default_data_root() -> Path:
     local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
     if local_app_data:
-        return Path(local_app_data) / "DailyBusinessAgent"
-    return Path.home() / ".daily_business_agent"
+        # Keep the path used by the accepted 0.3.1 installation so upgrades
+        # retain DPAPI credentials, cached shops and future local report jobs.
+        return Path(local_app_data) / "CTJFyrdian" / "DailyBusinessAgent"
+    return Path.home() / ".ctjfyrdian" / "daily_business_agent"
 
 
 @dataclass(frozen=True)

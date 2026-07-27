@@ -8,6 +8,7 @@ on:
       - "tests/browser_public_pages.py"
       - "tests/browser_lingxing_steps.py"
       - "requirements*.txt"
+      - "VERSION"
       - ".github/workflows/browser-tests.yml"
   push:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - "tests/browser_public_pages.py"
       - "tests/browser_lingxing_steps.py"
       - "requirements*.txt"
+      - "VERSION"
       - ".github/workflows/browser-tests.yml"
 
 permissions:
@@ -31,12 +33,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-build.txt
       - name: Install browser acceptance dependencies
         run: >-
           python -m pip install --disable-pip-version-check
-          -r requirements.txt
-          fastapi uvicorn python-multipart httpx
-          playwright==1.55.0
+          -r requirements-build.txt playwright==1.55.0
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
       - name: Check report page in Chromium
@@ -55,9 +57,5 @@ jobs:
         run: python tests/browser_public_pages.py --check dashboard-render-product
       - name: Check dashboard rendered sales in Chromium
         run: python tests/browser_public_pages.py --check dashboard-render-sales
-      - name: Check Lingxing page loading in Chromium
+      - name: Check single-file Lingxing page in Chromium
         run: python tests/browser_lingxing_steps.py --check page
-      - name: Check Lingxing configuration in Chromium
-        run: python tests/browser_lingxing_steps.py --check configure
-      - name: Check Lingxing disconnect in Chromium
-        run: python tests/browser_lingxing_steps.py --check disconnect

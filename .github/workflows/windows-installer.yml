@@ -7,24 +7,16 @@ on:
       - "agent/**"
       - "config/**"
       - "packaging/**"
+      - "scripts/**"
       - "src/**"
       - "tests/**"
       - "requirements*.txt"
+      - "VERSION"
       - "LICENSE"
       - "NOTICE"
       - ".github/workflows/windows-installer.yml"
   push:
     branches: [main]
-    paths:
-      - "agent/**"
-      - "config/**"
-      - "packaging/**"
-      - "src/**"
-      - "tests/**"
-      - "requirements*.txt"
-      - "LICENSE"
-      - "NOTICE"
-      - ".github/workflows/windows-installer.yml"
 
 permissions:
   contents: read
@@ -34,28 +26,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-install-uninstall:
+  build-install-upgrade-uninstall:
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 60
     defaults:
       run:
         shell: pwsh
-
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          architecture: "x64"
-          cache: "pip"
+          architecture: x64
+          cache: pip
           cache-dependency-path: |
             requirements-build.txt
             requirements-ci.txt
-
-      - name: Ensure Inno Setup compiler exists
+      - name: Read candidate version
+        id: version
+        run: |
+          $version = (Get-Content -Raw "VERSION").Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid VERSION" }
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Ensure Inno Setup
         run: |
           $candidates = @(
             "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
@@ -66,185 +59,26 @@ jobs:
           if (-not ($candidates | Where-Object { Test-Path $_ } | Select-Object -First 1)) {
             choco install innosetup --no-progress -y
           }
-
       - name: Install pinned dependencies
         run: python -m pip install --disable-pip-version-check -r requirements-build.txt -r requirements-ci.txt
-
       - name: Check dependency consistency
         run: python -m pip check
-
-      - name: Audit pinned build environment
+      - name: Audit pinned runtime and build environment
         run: python -m pip_audit --strict --progress-spinner off -r requirements-build.txt
-
-      - name: Build installer
-        id: build
-        continue-on-error: true
-        run: |
-          $stdout = Join-Path $env:RUNNER_TEMP "daily-agent-installer-build.stdout.log"
-          $stderr = Join-Path $env:RUNNER_TEMP "daily-agent-installer-build.stderr.log"
-          $script = (Resolve-Path ".\packaging\build_installer.ps1").Path
-          $process = Start-Process -FilePath "pwsh" `
-            -ArgumentList @("-NoLogo", "-NoProfile", "-File", $script) `
-            -WorkingDirectory (Get-Location).Path `
-            -RedirectStandardOutput $stdout `
-            -RedirectStandardError $stderr `
-            -Wait `
-            -PassThru
-          Write-Host "----- build stdout -----"
-          if (Test-Path $stdout) { Get-Content $stdout }
-          Write-Host "----- build stderr -----"
-          if (Test-Path $stderr) { Get-Content $stderr }
-          if ($process.ExitCode -ne 0) {
-            throw "Installer build failed with exit code $($process.ExitCode)."
-          }
-
+      - name: Build unified installer
+        run: .\packaging\build_installer.ps1
+      - name: Verify install, frozen SDK, clean upgrade, file association and data retention
+        run: .\scripts\verify_windows_installer.ps1
       - name: Generate dependency license report
-        if: steps.build.outcome == 'success'
         run: |
-          New-Item -ItemType Directory -Force -Path release | Out-Null
           python -m piplicenses --format=markdown --with-urls --output-file=release/THIRD_PARTY_LICENSES.generated.md
-
-      - name: Upload build diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: DailyBusinessAgent-Build-Diagnostics
-          path: |
-            ${{ runner.temp }}/daily-agent-installer-build.stdout.log
-            ${{ runner.temp }}/daily-agent-installer-build.stderr.log
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Stop after failed build
-        if: steps.build.outcome == 'failure'
-        run: throw "Build failed; diagnostics were uploaded."
-
-      - name: Verify installer metadata
-        run: |
-          $setup = Get-Item "release\DailyBusinessAgent-Setup-0.1.0.exe"
-          if ($setup.Length -le 0) { throw "Installer is empty." }
-          if ($setup.Length -gt 209715200) { throw "Installer exceeds 200 MiB." }
-          $metadata = Get-Content "release\DailyBusinessAgent-Setup-0.1.0.txt"
-          if (-not ($metadata -match '^sha256=[0-9a-f]{64}$')) { throw "SHA256 metadata is missing or invalid." }
-          Write-Host ($metadata -join "`n")
-          Write-Host ("Installer size: {0:N2} MiB" -f ($setup.Length / 1MB))
-
-      - name: Install, launch, and uninstall on Windows
-        id: smoke
-        continue-on-error: true
-        run: |
-          $smokeLog = Join-Path $env:RUNNER_TEMP "daily-agent-smoke-test.log"
-          $agentStdout = Join-Path $env:RUNNER_TEMP "daily-agent-runtime.stdout.log"
-          $agentStderr = Join-Path $env:RUNNER_TEMP "daily-agent-runtime.stderr.log"
-          $agentCrash = Join-Path $env:RUNNER_TEMP "daily-agent-runtime.crash.log"
-          $installListing = Join-Path $env:RUNNER_TEMP "daily-agent-install-listing.log"
-          $agent = $null
-
-          try {
-            $setup = (Resolve-Path "release\DailyBusinessAgent-Setup-0.1.0.exe").Path
-            $installDir = Join-Path $env:RUNNER_TEMP "DailyBusinessAgentApp"
-            $dataDir = Join-Path $env:RUNNER_TEMP "DailyBusinessAgentData"
-            New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-            Set-Content -Path (Join-Path $dataDir "preserve-me.txt") -Value "keep"
-
-            $install = Start-Process -FilePath $setup -ArgumentList @(
-              "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
-              "/DIR=$installDir", "/TASKS=startup"
-            ) -Wait -PassThru
-            Add-Content $smokeLog "Installer exit code: $($install.ExitCode)"
-            if ($install.ExitCode -ne 0) { throw "Installer failed with exit code $($install.ExitCode)." }
-
-            Get-ChildItem -Recurse -Force $installDir |
-              Select-Object FullName, Length, LastWriteTime |
-              Format-Table -AutoSize |
-              Out-String -Width 4096 |
-              Set-Content -Encoding utf8 $installListing
-
-            $exe = Join-Path $installDir "DailyBusinessAgent.exe"
-            if (-not (Test-Path $exe)) { throw "Installed executable is missing." }
-
-            $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\每日经营数据本地助手.lnk"
-            if (-not (Test-Path $startup)) { throw "Login startup shortcut is missing." }
-
-            $env:DAILY_BUSINESS_AGENT_CRASH_LOG = $agentCrash
-            $agent = Start-Process -FilePath $exe `
-              -ArgumentList @("--no-browser", "--data-root", $dataDir) `
-              -RedirectStandardOutput $agentStdout `
-              -RedirectStandardError $agentStderr `
-              -PassThru
-
-            $health = $null
-            foreach ($attempt in 1..45) {
-              if ($agent.HasExited) { break }
-              try {
-                $health = Invoke-RestMethod -Uri "http://127.0.0.1:8766/health" -TimeoutSec 2
-                if ($health.status -eq "ok") { break }
-              } catch {
-                Start-Sleep -Seconds 1
-              }
-            }
-            if (-not $health -or $health.status -ne "ok") { throw "Health endpoint did not become ready." }
-            if ($health.bind -ne "127.0.0.1:8766") { throw "Unexpected bind address: $($health.bind)" }
-
-            foreach ($uri in @("http://127.0.0.1:8766/", "http://127.0.0.1:8766/lingxing")) {
-              $page = Invoke-WebRequest -Uri $uri -TimeoutSec 5 -UseBasicParsing
-              if ($page.StatusCode -ne 200) { throw "Local page failed: $uri" }
-            }
-
-            $listeners = Get-NetTCPConnection -State Listen -LocalPort 8766 -ErrorAction Stop
-            if ($listeners.LocalAddress | Where-Object { $_ -notin @("127.0.0.1", "::1") }) {
-              throw "Agent is listening outside loopback."
-            }
-
-            Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 2
-
-            $uninstaller = Join-Path $installDir "unins000.exe"
-            if (-not (Test-Path $uninstaller)) { throw "Uninstaller is missing." }
-            $uninstall = Start-Process -FilePath $uninstaller -ArgumentList @(
-              "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
-            ) -Wait -PassThru
-            if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed with exit code $($uninstall.ExitCode)." }
-            if (Test-Path $exe) { throw "Application executable remains after uninstall." }
-            if (Test-Path $startup) { throw "Login startup shortcut remains after uninstall." }
-            if (-not (Test-Path (Join-Path $dataDir "preserve-me.txt"))) { throw "User data was deleted during uninstall." }
-
-            Add-Content $smokeLog "PASS: install, startup shortcut, launch, local pages, and uninstall checks succeeded."
-          } catch {
-            Add-Content $smokeLog ("ERROR: " + ($_ | Out-String))
-            throw
-          } finally {
-            if ($agent -and -not $agent.HasExited) {
-              Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue
-            }
-            Remove-Item Env:DAILY_BUSINESS_AGENT_CRASH_LOG -ErrorAction SilentlyContinue
-          }
-
-      - name: Upload smoke-test diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: DailyBusinessAgent-Smoke-Diagnostics
-          path: |
-            ${{ runner.temp }}/daily-agent-smoke-test.log
-            ${{ runner.temp }}/daily-agent-runtime.stdout.log
-            ${{ runner.temp }}/daily-agent-runtime.stderr.log
-            ${{ runner.temp }}/daily-agent-runtime.crash.log
-            ${{ runner.temp }}/daily-agent-install-listing.log
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Stop after failed smoke test
-        if: steps.smoke.outcome == 'failure'
-        run: throw "Windows install/start/uninstall smoke test failed; diagnostics were uploaded."
-
       - name: Upload candidate installer
         uses: actions/upload-artifact@v4
         with:
-          name: DailyBusinessAgent-Windows-0.1.0
+          name: DailyBusinessAgent-Windows-${{ steps.version.outputs.value }}-${{ github.sha }}
           path: |
-            release/DailyBusinessAgent-Setup-0.1.0.exe
-            release/DailyBusinessAgent-Setup-0.1.0.txt
+            release/DailyBusinessAgent-Setup-${{ steps.version.outputs.value }}.exe
+            release/DailyBusinessAgent-Setup-${{ steps.version.outputs.value }}.exe.sha256
             release/THIRD_PARTY_LICENSES.generated.md
           if-no-files-found: error
           retention-days: 14
