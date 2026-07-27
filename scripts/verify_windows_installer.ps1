@@ -189,7 +189,7 @@ SYNTHETIC-STORE,Synthetic Store,US,SYNTH-SKU-1,SYNTH-SKU-1,B000TEST01,Synthetic 
     }
     foreach ($metric in $expected.Keys) {
       if ([Math]::Abs([double]$actual[$metric] - [double]$expected[$metric]) -gt 0.001) {
-        throw "installed Agent HTTP analysis lost metric $metric: actual=$($actual[$metric]) expected=$($expected[$metric])"
+        throw "installed Agent HTTP analysis lost metric ${metric}: actual=$($actual[$metric]) expected=$($expected[$metric])"
       }
     }
     Write-Host "PASS: installed Agent queued, ran and preserved nonzero dashboard metrics ($Label)"
