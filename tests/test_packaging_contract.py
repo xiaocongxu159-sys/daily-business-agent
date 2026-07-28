@@ -76,7 +76,7 @@ def test_installer_live_upgrade_is_fail_safe_before_runtime_delete() -> None:
     required = (
         "AllowCancelDuringInstall=no",
         "CloseApplications=yes",
-        "CloseApplicationsFilter=*.*",
+        "CloseApplicationsFilter={#MyAppExeName}",
         "function PrepareToInstall",
         "taskkill /IM {#MyAppExeName} /T /F",
         "GetActiveTcpListeners()",
