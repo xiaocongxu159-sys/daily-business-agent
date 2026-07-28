@@ -5,6 +5,7 @@ import functools
 import http.server
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -20,6 +21,30 @@ import pandas as pd
 from playwright.sync_api import sync_playwright
 
 from src.html_dashboard_writer import write_html_dashboard
+
+
+CHART_EXPECTATIONS = {
+    "trafficChart": {
+        "title": "业务流量趋势",
+        "series": ["Sessions", "PV"],
+        "axes": {"left": list("流量")},
+    },
+    "salesChart": {
+        "title": "销量与销售额趋势",
+        "series": ["订单量", "销售额"],
+        "axes": {"left": list("销量"), "right": list("销售额")},
+    },
+    "adsChart": {
+        "title": "广告花费与销售额趋势",
+        "series": ["广告花费", "广告销售额"],
+        "axes": {"left": list("广告花费"), "right": list("广告销售额")},
+    },
+    "inventoryChart": {
+        "title": "库存趋势",
+        "series": ["FBA可售库存", "总库存"],
+        "axes": {"left": list("库存")},
+    },
+}
 
 
 def _build(root: Path) -> Path:
@@ -61,12 +86,208 @@ def _axis_state(label):
           side: node.getAttribute('data-axis-label'),
           upright: node.getAttribute('data-axis-upright'),
           transform: node.getAttribute('transform'),
+          html: node.outerHTML,
           chars: Array.from(node.querySelectorAll('tspan')).map(item => item.textContent),
           xValues: Array.from(node.querySelectorAll('tspan')).map(item => item.getAttribute('x')),
           yValues: Array.from(node.querySelectorAll('tspan')).map(item => Number(item.getAttribute('y'))),
+          tspanTransforms: Array.from(node.querySelectorAll('tspan')).map(item => item.getAttribute('transform')),
         })
         """
     )
+
+
+def _assert_upright_axes(page, events: list[str]) -> None:
+    axis_events = {}
+    for chart_id, expected in CHART_EXPECTATIONS.items():
+        expected_by_side = expected["axes"]
+        labels = page.locator(f"#{chart_id} [data-axis-label]")
+        assert labels.count() == len(expected_by_side), (
+            chart_id,
+            labels.count(),
+            expected_by_side,
+        )
+        actual_by_side = {}
+        for index in range(labels.count()):
+            label = labels.nth(index)
+            state = _axis_state(label)
+            actual_by_side[state["side"]] = state["chars"]
+            assert state["upright"] == "1", (chart_id, state)
+            assert state["transform"] is None, (chart_id, state)
+            assert all(value is None for value in state["tspanTransforms"]), (chart_id, state)
+            assert "rotate(90" not in state["html"], (chart_id, state)
+            assert "rotate(-90" not in state["html"], (chart_id, state)
+            assert len(set(state["xValues"])) == 1, (chart_id, state)
+            assert state["yValues"] == sorted(state["yValues"]), (chart_id, state)
+            assert len(set(state["yValues"])) == len(state["yValues"]), (chart_id, state)
+            box = label.bounding_box()
+            assert box is not None and box["width"] > 0 and box["height"] > 0, (
+                chart_id,
+                index,
+                box,
+            )
+        assert actual_by_side == expected_by_side, (
+            chart_id,
+            actual_by_side,
+            expected_by_side,
+        )
+        axis_events[chart_id] = actual_by_side
+    events.append(f"upright_axes={json.dumps(axis_events, ensure_ascii=False)}")
+
+
+def _assert_chart_structure(page, events: list[str]) -> None:
+    states = {}
+    for chart_id, expected in CHART_EXPECTATIONS.items():
+        chart = page.locator(f"#{chart_id}")
+        svg = chart.locator("svg")
+        text = svg.text_content() or ""
+        assert svg.get_attribute("aria-label") == expected["title"], (chart_id, text)
+        assert expected["title"] in text, (chart_id, text)
+        for series_name in expected["series"]:
+            assert series_name in text, (chart_id, series_name, text)
+        assert "07-01" in text and "07-30" in text, (chart_id, text)
+        point_count = chart.locator("[data-chart-point]").count()
+        assert point_count == 30 * len(expected["series"]), (chart_id, point_count)
+        assert chart.locator("title").count() == 0, chart_id
+        widths = chart.evaluate(
+            "node => ({container:node.clientWidth,svg:node.querySelector('svg').getBoundingClientRect().width})"
+        )
+        assert widths["svg"] <= widths["container"] + 1, (chart_id, widths)
+        states[chart_id] = {"points": point_count, "widths": widths}
+    events.append(f"chart_structure={json.dumps(states, ensure_ascii=False)}")
+
+
+def _hover_and_assert_tooltip(page, chart_id: str, artifact_dir: Path, events: list[str]) -> None:
+    expected_series = CHART_EXPECTATIONS[chart_id]["series"]
+    chart = page.locator(f"#{chart_id}")
+    chart.scroll_into_view_if_needed()
+    svg = chart.locator("svg")
+    svg_box = svg.bounding_box()
+    assert svg_box is not None
+    page.mouse.move(
+        svg_box["x"] + svg_box["width"] * 0.56,
+        svg_box["y"] + svg_box["height"] * 0.50,
+    )
+    tooltip = chart.locator("[data-chart-tooltip]")
+    tooltip.wait_for(state="visible", timeout=5_000)
+    tooltip_state = tooltip.evaluate(
+        r"""
+        node => ({
+          tag: node.tagName,
+          background: getComputedStyle(node).backgroundColor,
+          color: getComputedStyle(node).color,
+          hidden: node.hidden,
+          date: node.dataset.tooltipDate,
+          width: node.getBoundingClientRect().width,
+          height: node.getBoundingClientRect().height,
+          rows: Array.from(node.querySelectorAll('.chart-tooltip-row')).map(row => ({
+            name: (row.querySelectorAll('span')[1]?.textContent || '').replace(/：\s*$/, ''),
+            value: row.querySelector('strong')?.textContent || '',
+            dot: getComputedStyle(row.querySelector('.chart-tooltip-dot')).backgroundColor,
+          })),
+        })
+        """
+    )
+    assert tooltip_state["tag"] == "DIV", (chart_id, tooltip_state)
+    assert not tooltip_state["hidden"], (chart_id, tooltip_state)
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", tooltip_state["date"]), (
+        chart_id,
+        tooltip_state,
+    )
+    assert tooltip_state["width"] > 100 and tooltip_state["height"] > 40, (
+        chart_id,
+        tooltip_state,
+    )
+    background_numbers = [float(value) for value in re.findall(r"[\d.]+", tooltip_state["background"])]
+    assert len(background_numbers) >= 3 and max(background_numbers[:3]) < 80, (
+        chart_id,
+        tooltip_state,
+    )
+    assert tooltip_state["color"] == "rgb(255, 255, 255)", (chart_id, tooltip_state)
+    assert [row["name"] for row in tooltip_state["rows"]] == expected_series, (
+        chart_id,
+        tooltip_state,
+    )
+    assert all(row["value"].strip() for row in tooltip_state["rows"]), (
+        chart_id,
+        tooltip_state,
+    )
+    assert all(row["dot"] not in {"rgba(0, 0, 0, 0)", "transparent"} for row in tooltip_state["rows"]), (
+        chart_id,
+        tooltip_state,
+    )
+    screenshot = artifact_dir / f"rich-dashboard-tooltip-{chart_id}.png"
+    page.screenshot(path=str(screenshot), full_page=False)
+    assert screenshot.stat().st_size > 10_000, screenshot
+    tooltip.wait_for(state="visible", timeout=2_000)
+    events.append(f"tooltip_{chart_id}={json.dumps(tooltip_state, ensure_ascii=False)}")
+    page.mouse.move(2, 2)
+    tooltip.wait_for(state="hidden", timeout=2_000)
+
+
+def _assert_inventory_changes_by_date(page, events: list[str]) -> None:
+    trends = {}
+    for series_index, series_name in enumerate(CHART_EXPECTATIONS["inventoryChart"]["series"]):
+        points = page.locator(
+            f'#inventoryChart [data-chart-point][data-series-index="{series_index}"]'
+        )
+        assert points.count() == 30, (series_name, points.count())
+        first_y = float(points.first.get_attribute("cy"))
+        last_y = float(points.last.get_attribute("cy"))
+        assert last_y > first_y + 20, (series_name, first_y, last_y)
+        trends[series_name] = {"first_y": first_y, "last_y": last_y}
+    events.append(f"inventory_daily_change={json.dumps(trends, ensure_ascii=False)}")
+
+
+def _assert_filters_and_wheel(page, events: list[str]) -> None:
+    details = page.locator("#filterDetails")
+    assert not details.evaluate("node => node.open")
+    page.locator("#filterDetails > summary").click()
+    assert details.evaluate("node => node.open")
+    page.locator("#filterDetails > summary").click()
+    assert not details.evaluate("node => node.open")
+    events.append("filters=collapsed-expanded-collapsed")
+
+    traffic = page.locator("#trafficChart")
+    traffic.scroll_into_view_if_needed()
+    traffic.hover()
+    before = page.evaluate("window.scrollY")
+    maximum = page.evaluate("document.documentElement.scrollHeight - window.innerHeight")
+    if before >= maximum - 5:
+        page.mouse.wheel(0, -500)
+        page.wait_for_timeout(300)
+        after = page.evaluate("window.scrollY")
+        assert after < before, (before, after, maximum)
+    else:
+        page.mouse.wheel(0, 500)
+        page.wait_for_timeout(300)
+        after = page.evaluate("window.scrollY")
+        assert after > before, (before, after, maximum)
+    events.append(f"wheel_before={before};wheel_after={after};max={maximum}")
+
+
+def _assert_responsive_width(page, artifact_dir: Path, events: list[str]) -> None:
+    page.set_viewport_size({"width": 780, "height": 900})
+    page.wait_for_timeout(400)
+    boxes = []
+    widths = {}
+    for chart_id in CHART_EXPECTATIONS:
+        chart = page.locator(f"#{chart_id}")
+        box = chart.bounding_box()
+        assert box is not None
+        boxes.append((chart_id, box))
+        state = chart.evaluate(
+            "node => ({container:node.clientWidth,svg:node.querySelector('svg').getBoundingClientRect().width})"
+        )
+        assert state["container"] > 300, (chart_id, state)
+        assert state["svg"] <= state["container"] + 1, (chart_id, state)
+        widths[chart_id] = state
+    base_x = boxes[0][1]["x"]
+    assert all(abs(box["x"] - base_x) < 2 for _, box in boxes), boxes
+    assert [box["y"] for _, box in boxes] == sorted(box["y"] for _, box in boxes), boxes
+    screenshot = artifact_dir / "rich-dashboard-responsive-780.png"
+    page.screenshot(path=str(screenshot), full_page=True)
+    assert screenshot.stat().st_size > 10_000
+    events.append(f"responsive_widths={json.dumps(widths, ensure_ascii=False)}")
 
 
 def main() -> int:
@@ -113,102 +334,22 @@ def main() -> int:
                         assert "13020.00" in page.locator("#cards").inner_text()
                         events.append("sales=13020.00")
 
-                        axis_expectations = {
-                            "trafficChart": {"left": list("流量")},
-                            "salesChart": {"left": list("销量"), "right": list("销售额")},
-                            "adsChart": {"left": list("广告花费"), "right": list("广告销售额")},
-                            "inventoryChart": {"left": list("库存")},
-                        }
-                        axis_events = {}
-                        for chart_id, expected_by_side in axis_expectations.items():
-                            labels = page.locator(f"#{chart_id} [data-axis-label]")
-                            assert labels.count() == len(expected_by_side), (
-                                chart_id,
-                                labels.count(),
-                                expected_by_side,
-                            )
-                            actual_by_side = {}
-                            for index in range(labels.count()):
-                                label = labels.nth(index)
-                                state = _axis_state(label)
-                                actual_by_side[state["side"]] = state["chars"]
-                                assert state["upright"] == "1", (chart_id, state)
-                                assert state["transform"] is None, (chart_id, state)
-                                assert len(set(state["xValues"])) == 1, (chart_id, state)
-                                assert state["yValues"] == sorted(state["yValues"]), (chart_id, state)
-                                assert len(set(state["yValues"])) == len(state["yValues"]), (chart_id, state)
-                                box = label.bounding_box()
-                                assert box is not None and box["width"] > 0 and box["height"] > 0, (
-                                    chart_id,
-                                    index,
-                                    box,
-                                )
-                            assert actual_by_side == expected_by_side, (
-                                chart_id,
-                                actual_by_side,
-                                expected_by_side,
-                            )
-                            axis_events[chart_id] = actual_by_side
-                        events.append(f"upright_axes={json.dumps(axis_events, ensure_ascii=False)}")
-
-                        traffic = page.locator("#trafficChart")
-                        traffic.scroll_into_view_if_needed()
-                        traffic_box = traffic.bounding_box()
-                        assert traffic_box is not None
-                        page.mouse.move(
-                            traffic_box["x"] + traffic_box["width"] * 0.56,
-                            traffic_box["y"] + traffic_box["height"] * 0.50,
-                        )
-                        tooltip = page.locator("#trafficChart [data-chart-tooltip]")
-                        tooltip.wait_for(state="visible", timeout=5_000)
-                        tooltip_text = tooltip.inner_text()
-                        assert "2026-07-" in tooltip_text, tooltip_text
-                        assert "Sessions" in tooltip_text and "PV" in tooltip_text, tooltip_text
-                        tooltip_style = tooltip.evaluate(
-                            "node => ({background:getComputedStyle(node).backgroundColor,color:getComputedStyle(node).color,hidden:node.hidden,date:node.dataset.tooltipDate})"
-                        )
-                        assert not tooltip_style["hidden"], tooltip_style
-                        assert tooltip_style["date"].startswith("2026-07-"), tooltip_style
-                        assert tooltip_style["background"] not in {"rgba(0, 0, 0, 0)", "transparent"}, tooltip_style
-                        assert tooltip.locator(".chart-tooltip-dot").count() == 2
-                        events.append(f"tooltip={json.dumps(tooltip_style, ensure_ascii=False)}")
-                        page.screenshot(
-                            path=str(artifact_dir / "rich-dashboard-tooltip-viewport.png"),
-                            full_page=False,
-                        )
-                        tooltip.wait_for(state="visible", timeout=2_000)
-                        assert (artifact_dir / "rich-dashboard-tooltip-viewport.png").stat().st_size > 10_000
-
-                        details = page.locator("#filterDetails")
-                        assert not details.evaluate("node => node.open")
-                        page.locator("#filterDetails > summary").click()
-                        assert details.evaluate("node => node.open")
-                        page.locator("#filterDetails > summary").click()
-                        assert not details.evaluate("node => node.open")
-                        events.append("filters=collapsed-expanded-collapsed")
-
-                        traffic.hover()
-                        before = page.evaluate("window.scrollY")
-                        maximum = page.evaluate("document.documentElement.scrollHeight - window.innerHeight")
-                        if before >= maximum - 5:
-                            page.mouse.wheel(0, -500)
-                            page.wait_for_timeout(300)
-                            after = page.evaluate("window.scrollY")
-                            assert after < before, (before, after, maximum)
-                        else:
-                            page.mouse.wheel(0, 500)
-                            page.wait_for_timeout(300)
-                            after = page.evaluate("window.scrollY")
-                            assert after > before, (before, after, maximum)
-                        events.append(f"wheel_before={before};wheel_after={after};max={maximum}")
-
-                        widths = traffic.evaluate(
-                            "node => ({container:node.clientWidth,svg:node.querySelector('svg').getBoundingClientRect().width})"
-                        )
-                        assert widths["svg"] <= widths["container"] + 1, widths
+                        _assert_upright_axes(page, events)
+                        _assert_chart_structure(page, events)
+                        _assert_inventory_changes_by_date(page, events)
+                        for chart_id in CHART_EXPECTATIONS:
+                            _hover_and_assert_tooltip(page, chart_id, artifact_dir, events)
+                        _assert_filters_and_wheel(page, events)
                         assert page.locator("#body").inner_text().count("Rich Product") >= 2
+                        _assert_responsive_width(page, artifact_dir, events)
                         assert not external, external
-                        events.append(f"widths={json.dumps(widths)}")
+                        browser_errors = [
+                            event
+                            for event in events
+                            if event.startswith("pageerror:") or event.startswith("console[error]:")
+                        ]
+                        assert not browser_errors, browser_errors
+                        events.append("network=local-only")
                         page.screenshot(path=str(artifact_dir / "rich-dashboard-pass.png"), full_page=True)
                     finally:
                         try:
@@ -228,7 +369,10 @@ def main() -> int:
         raise
     finally:
         (artifact_dir / "rich-dashboard-events.txt").write_text("\n".join(events) + "\n", encoding="utf-8")
-    print("PASS: rich dashboard upright axes, rich tooltip, filters, wheel scrolling and local-only network")
+    print(
+        "PASS: four rich dashboard charts, upright axes, black tooltips, inventory dates, filters, "
+        "wheel scrolling, responsive width and local-only network"
+    )
     return 0
 
 
