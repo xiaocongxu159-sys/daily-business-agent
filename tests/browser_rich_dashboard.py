@@ -54,6 +54,21 @@ def _build(root: Path) -> Path:
     return html
 
 
+def _axis_state(label):
+    return label.evaluate(
+        """
+        node => ({
+          side: node.getAttribute('data-axis-label'),
+          upright: node.getAttribute('data-axis-upright'),
+          transform: node.getAttribute('transform'),
+          chars: Array.from(node.querySelectorAll('tspan')).map(item => item.textContent),
+          xValues: Array.from(node.querySelectorAll('tspan')).map(item => item.getAttribute('x')),
+          yValues: Array.from(node.querySelectorAll('tspan')).map(item => Number(item.getAttribute('y'))),
+        })
+        """
+    )
+
+
 def main() -> int:
     artifact_dir = Path(os.environ.get("RICH_DASHBOARD_ARTIFACT_DIR", tempfile.gettempdir()))
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -70,7 +85,7 @@ def main() -> int:
             try:
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch(headless=True)
-                    context = browser.new_context(viewport={"width": 1440, "height": 800})
+                    context = browser.new_context(viewport={"width": 1440, "height": 900})
 
                     def inspect_request(request) -> None:
                         parsed = urlsplit(request.url)
@@ -99,23 +114,68 @@ def main() -> int:
                         events.append("sales=13020.00")
 
                         axis_expectations = {
-                            "trafficChart": ["流量（Sessions / PV）"],
-                            "salesChart": ["订单量（单）", "销售额（金额）"],
-                            "adsChart": ["广告花费（金额）", "广告销售额（金额）"],
-                            "inventoryChart": ["库存数量（件）"],
+                            "trafficChart": {"left": list("流量")},
+                            "salesChart": {"left": list("销量"), "right": list("销售额")},
+                            "adsChart": {"left": list("广告花费"), "right": list("广告销售额")},
+                            "inventoryChart": {"left": list("库存")},
                         }
-                        for chart_id, expected_labels in axis_expectations.items():
+                        axis_events = {}
+                        for chart_id, expected_by_side in axis_expectations.items():
                             labels = page.locator(f"#{chart_id} [data-axis-label]")
-                            actual = labels.all_text_contents()
-                            assert actual == expected_labels, (chart_id, actual, expected_labels)
+                            assert labels.count() == len(expected_by_side), (
+                                chart_id,
+                                labels.count(),
+                                expected_by_side,
+                            )
+                            actual_by_side = {}
                             for index in range(labels.count()):
-                                box = labels.nth(index).bounding_box()
+                                label = labels.nth(index)
+                                state = _axis_state(label)
+                                actual_by_side[state["side"]] = state["chars"]
+                                assert state["upright"] == "1", (chart_id, state)
+                                assert state["transform"] is None, (chart_id, state)
+                                assert len(set(state["xValues"])) == 1, (chart_id, state)
+                                assert state["yValues"] == sorted(state["yValues"]), (chart_id, state)
+                                assert len(set(state["yValues"])) == len(state["yValues"]), (chart_id, state)
+                                box = label.bounding_box()
                                 assert box is not None and box["width"] > 0 and box["height"] > 0, (
                                     chart_id,
                                     index,
                                     box,
                                 )
-                        events.append("axis_labels=visible-and-complete")
+                            assert actual_by_side == expected_by_side, (
+                                chart_id,
+                                actual_by_side,
+                                expected_by_side,
+                            )
+                            axis_events[chart_id] = actual_by_side
+                        events.append(f"upright_axes={json.dumps(axis_events, ensure_ascii=False)}")
+
+                        traffic = page.locator("#trafficChart")
+                        traffic.scroll_into_view_if_needed()
+                        traffic_box = traffic.bounding_box()
+                        assert traffic_box is not None
+                        page.mouse.move(
+                            traffic_box["x"] + traffic_box["width"] * 0.56,
+                            traffic_box["y"] + traffic_box["height"] * 0.50,
+                        )
+                        tooltip = page.locator("#trafficChart [data-chart-tooltip]")
+                        tooltip.wait_for(state="visible", timeout=5_000)
+                        tooltip_text = tooltip.inner_text()
+                        assert "2026-07-" in tooltip_text, tooltip_text
+                        assert "Sessions" in tooltip_text and "PV" in tooltip_text, tooltip_text
+                        tooltip_style = tooltip.evaluate(
+                            "node => ({background:getComputedStyle(node).backgroundColor,color:getComputedStyle(node).color,hidden:node.hidden,date:node.dataset.tooltipDate})"
+                        )
+                        assert not tooltip_style["hidden"], tooltip_style
+                        assert tooltip_style["date"].startswith("2026-07-"), tooltip_style
+                        assert tooltip_style["background"] not in {"rgba(0, 0, 0, 0)", "transparent"}, tooltip_style
+                        assert tooltip.locator(".chart-tooltip-dot").count() == 2
+                        events.append(f"tooltip={json.dumps(tooltip_style, ensure_ascii=False)}")
+                        page.screenshot(
+                            path=str(artifact_dir / "rich-dashboard-tooltip-pass.png"),
+                            full_page=True,
+                        )
 
                         details = page.locator("#filterDetails")
                         assert not details.evaluate("node => node.open")
@@ -124,8 +184,8 @@ def main() -> int:
                         page.locator("#filterDetails > summary").click()
                         assert not details.evaluate("node => node.open")
                         events.append("filters=collapsed-expanded-collapsed")
-                        chart = page.locator("#trafficChart")
-                        chart.hover()
+
+                        traffic.hover()
                         before = page.evaluate("window.scrollY")
                         maximum = page.evaluate("document.documentElement.scrollHeight - window.innerHeight")
                         if before >= maximum - 5:
@@ -139,7 +199,8 @@ def main() -> int:
                             after = page.evaluate("window.scrollY")
                             assert after > before, (before, after, maximum)
                         events.append(f"wheel_before={before};wheel_after={after};max={maximum}")
-                        widths = chart.evaluate(
+
+                        widths = traffic.evaluate(
                             "node => ({container:node.clientWidth,svg:node.querySelector('svg').getBoundingClientRect().width})"
                         )
                         assert widths["svg"] <= widths["container"] + 1, widths
@@ -165,7 +226,7 @@ def main() -> int:
         raise
     finally:
         (artifact_dir / "rich-dashboard-events.txt").write_text("\n".join(events) + "\n", encoding="utf-8")
-    print("PASS: rich dashboard charts, axis labels, filters, wheel scrolling and local-only network")
+    print("PASS: rich dashboard upright axes, rich tooltip, filters, wheel scrolling and local-only network")
     return 0
 
 
