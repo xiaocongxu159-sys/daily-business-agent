@@ -6,7 +6,9 @@ The synchronizer intentionally excludes the two unresolved sources:
 - fba_inventory_shared_detail (Lingxing upstream HTTP 500)
 
 All successful generations are written through LingxingDatasetStore. A failed
-dataset keeps its previous current generation readable.
+dataset keeps its previous current generation readable. Source rows are projected
+to an explicit allowlist before they reach local storage, so order-address fields
+and other unrelated response values are never persisted.
 """
 from __future__ import annotations
 
@@ -51,6 +53,96 @@ _AD_DATASETS = {
     "ads_sp_product_daily": "SpProductReports",
     "ads_sb_campaign_daily": "SbCampaignReports",
     "ads_sd_product_daily": "SdProductReports",
+}
+_APPROVED_OPTIONAL_FIELDS: dict[str, frozenset[str]] = {
+    "listings": frozenset(
+        {
+            "brand",
+            "category",
+            "category_rank",
+            "currency_code",
+            "landed_price",
+            "list_price",
+            "sale_price",
+            "your_price",
+            "b2b_price",
+            "on_sale_date",
+            "create_time",
+            "review_count",
+            "review_stars",
+            "sales_qty_1d",
+            "sales_qty_7d",
+            "sales_qty_14d",
+            "sales_qty_30d",
+            "sales_amt_1d",
+            "sales_amt_7d",
+            "sales_amt_14d",
+            "sales_amt_30d",
+            "thumbnail_url",
+        }
+    ),
+    "orders": frozenset(
+        {
+            "fulfillment_channel",
+            "sales_channel",
+            "order_item_status",
+            "purchase_time_loc",
+            "shipment_time_loc",
+        }
+    ),
+    "ads_sp_product_daily": frozenset(
+        {"direct_orders", "direct_sales", "direct_units", "units"}
+    ),
+    "ads_sb_campaign_daily": frozenset(
+        {
+            "direct_orders",
+            "direct_sales",
+            "direct_units",
+            "units",
+            "new_to_brand_orders",
+            "new_to_brand_sales",
+        }
+    ),
+    "ads_sd_product_daily": frozenset(
+        {"direct_orders", "direct_sales", "direct_units", "units"}
+    ),
+    "fba_inventory_snapshot": frozenset(
+        {
+            "product_name",
+            "brand_id",
+            "brand_name",
+            "category_id",
+            "category_name",
+            "warehouse_name",
+            "afn_fulfillable_total_qty",
+            "afn_actual_shipped_qty",
+            "afn_researching_qty",
+            "age_0_to_30_days_qty",
+            "age_31_to_60_days_qty",
+            "age_61_to_90_days_qty",
+            "age_0_to_90_days_qty",
+            "age_91_to_180_days_qty",
+            "age_181_to_270_days_qty",
+            "age_271_to_330_days_qty",
+            "age_271_to_365_days_qty",
+            "age_331_to_365_days_qty",
+            "age_365_plus_days_qty",
+            "estimated_30d_storage_fee",
+            "estimated_excess_qty",
+            "inventory_cost_amt",
+            "inventory_value_amt",
+            "inventory_health_status",
+            "inventory_low_level_fee_status",
+            "sell_through_rate",
+            "historical_days_of_supply",
+            "historical_st_days_of_supply",
+            "historical_lt_days_of_supply",
+            "estimated_days_of_supply",
+            "recommended_minimum_qty",
+            "recommended_action",
+            "currency_code",
+        }
+    ),
 }
 
 
@@ -115,11 +207,18 @@ def _normalized_row(
     *,
     additions: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    row = _row_mapping(raw)
+    source = _row_mapping(raw)
     if additions:
-        row.update({str(key): _json_safe(value) for key, value in additions.items()})
-    for field in BUSINESS_DATASETS[dataset].required_output_fields:
-        row.setdefault(field, None)
+        source.update(
+            {str(key): _json_safe(value) for key, value in additions.items()}
+        )
+    contract = BUSINESS_DATASETS[dataset]
+    allowed = (
+        set(contract.identity_fields)
+        | set(contract.required_output_fields)
+        | set(_APPROVED_OPTIONAL_FIELDS.get(dataset, ()))
+    )
+    row = {field: source.get(field) for field in sorted(allowed)}
     _require_identity(dataset, row)
     return row
 
@@ -255,20 +354,24 @@ class TlsSdkAvailableDatasetProvider:
                     "ad_profiles",
                     lambda: self._profiles_payload(api, shops, profiles),
                 )
-                for dataset, method_name in _AD_DATASETS.items():
-                    await self._capture(
-                        store,
-                        results,
-                        dataset,
-                        lambda dataset=dataset, method_name=method_name: self._ads_payload(
-                            api,
-                            shops,
-                            profiles,
+                if results.get("ad_profiles", {}).get("status") == "success":
+                    for dataset, method_name in _AD_DATASETS.items():
+                        await self._capture(
                             store,
+                            results,
                             dataset,
-                            method_name,
-                        ),
-                    )
+                            lambda dataset=dataset, method_name=method_name: self._ads_payload(
+                                api,
+                                shops,
+                                profiles,
+                                store,
+                                dataset,
+                                method_name,
+                            ),
+                        )
+                else:
+                    for dataset in _AD_DATASETS:
+                        self._dependency_failure(store, results, dataset)
                 await self._capture(
                     store,
                     results,
@@ -286,6 +389,26 @@ class TlsSdkAvailableDatasetProvider:
                 1 for item in results.values() if item.get("status") == "failed"
             ),
             "unavailable": dict(UNAVAILABLE_DATASETS),
+        }
+
+    @staticmethod
+    def _dependency_failure(
+        store: LingxingDatasetStore,
+        results: dict[str, dict[str, Any]],
+        dataset: str,
+    ) -> None:
+        status = store.record_failure(
+            dataset,
+            "同步依赖失败，已保留上次成功数据。",
+            error_code="dependency_failed",
+        )
+        current = store.load(dataset)
+        results[dataset] = {
+            "dataset": dataset,
+            "status": "failed",
+            "row_count": len(current.rows) if current else 0,
+            "last_success_at": status.get("last_success_at"),
+            "error_code": "dependency_failed",
         }
 
     async def _capture(
@@ -386,7 +509,9 @@ class TlsSdkAvailableDatasetProvider:
                 row = _normalized_row("orders", raw, additions={"sid": sid})
                 if not row.get("purchase_date_loc"):
                     row["purchase_date_loc"] = str(
-                        row.get("purchase_time_loc") or row.get("purchase_time_utc") or ""
+                        row.get("purchase_time_loc")
+                        or row.get("purchase_time_utc")
+                        or ""
                     )[:10]
                 rows.append(row)
         return rows, "upsert", {
