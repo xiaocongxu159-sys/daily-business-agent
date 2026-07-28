@@ -1,7 +1,7 @@
 import json
 import time
-from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from agent.lingxing_integration import create_integrated_app
@@ -21,6 +21,11 @@ from agent.lingxing_secure_store import (
 from agent.settings import AgentSettings
 
 TOKEN = "synthetic-probe-test-token"
+SAME_ORIGIN = {
+    "Origin": "http://127.0.0.1:8766",
+    "Referer": "http://127.0.0.1:8766/lingxing",
+    "Sec-Fetch-Site": "same-origin",
+}
 
 
 class FakeShopProvider:
@@ -77,7 +82,6 @@ class FakeProbeProvider:
                     "error_code": "",
                 },
             ],
-            # Unknown values from providers must be discarded by the service/store.
             "shop_id": "DO-NOT-PERSIST-SHOP-ID",
             "raw_rows": [{"amazon_order_id": "DO-NOT-PERSIST-ORDER"}],
         }
@@ -87,7 +91,10 @@ def credentials():
     return LingxingCredentials(
         app_id="synthetic-probe-app",
         app_secret="synthetic-probe-secret",
-        proxy_url="tls+http://synthetic-user:synthetic-pass@192.0.2.44:8443?fingerprint=" + "ab" * 32,
+        proxy_url=(
+            "tls+http://synthetic-user:synthetic-pass@192.0.2.44:8443?fingerprint="
+            + "ab" * 32
+        ),
         auto_sync=False,
         sync_interval_minutes=120,
     )
@@ -124,17 +131,14 @@ def test_response_summary_contains_schema_not_business_values():
         "request_id": "REQUEST-SYNTHETIC-SECRET",
     }
     summary = summarize_response(
-        "orders",
-        raw,
-        date_fields=("purchase_date_loc",),
+        "orders", raw, date_fields=("purchase_date_loc",)
     )
     encoded = json.dumps(summary, ensure_ascii=False)
     assert summary["status"] == "success"
     assert summary["response_count"] == 1
     assert summary["total_count"] == 99
     assert summary["date_from"] == "2026-07-27"
-    assert "amazon_order_id" in summary["fields"]
-    assert "sales_amt" in summary["fields"]
+    assert {"amazon_order_id", "sales_amt"}.issubset(summary["fields"])
     for forbidden in (
         "ORDER-SYNTHETIC-SECRET",
         "MSKU-SYNTHETIC-SECRET",
@@ -144,7 +148,7 @@ def test_response_summary_contains_schema_not_business_values():
         assert forbidden not in encoded
 
 
-def test_probe_result_validation_discards_unknown_provider_payload():
+def test_probe_result_validation_discards_unknown_payload_and_rejects_bad_shape():
     safe = validate_probe_result(
         {
             "status": "success",
@@ -156,8 +160,6 @@ def test_probe_result_validation_discards_unknown_provider_payload():
                     "sampled_rows": 0,
                     "response_count": 0,
                     "total_count": 0,
-                    "date_from": None,
-                    "date_to": None,
                     "error_code": "",
                     "raw_row": {"asin": "DO-NOT-PERSIST-ASIN"},
                 }
@@ -170,8 +172,6 @@ def test_probe_result_validation_discards_unknown_provider_payload():
     assert "credentials" not in encoded
     assert "DO-NOT-PERSIST" not in encoded
 
-
-def test_probe_result_rejects_invalid_dataset_status_and_field():
     base = {
         "status": "success",
         "datasets": [
@@ -186,32 +186,15 @@ def test_probe_result_rejects_invalid_dataset_status_and_field():
             }
         ],
     }
-    bad = json.loads(json.dumps(base))
-    bad["datasets"][0]["dataset"] = "../orders"
-    try:
-        validate_probe_result(bad)
-    except ProbeError:
-        pass
-    else:
-        raise AssertionError("path-like dataset was accepted")
-
-    bad = json.loads(json.dumps(base))
-    bad["datasets"][0]["status"] = "leak_raw_data"
-    try:
-        validate_probe_result(bad)
-    except ProbeError:
-        pass
-    else:
-        raise AssertionError("unknown status was accepted")
-
-    bad = json.loads(json.dumps(base))
-    bad["datasets"][0]["fields"] = ["amazon-order-id"]
-    try:
-        validate_probe_result(bad)
-    except ProbeError:
-        pass
-    else:
-        raise AssertionError("unsafe field name was accepted")
+    for key, bad_value in (
+        ("dataset", "../orders"),
+        ("status", "leak_raw_data"),
+        ("fields", ["amazon-order-id"]),
+    ):
+        bad = json.loads(json.dumps(base))
+        bad["datasets"][0][key] = bad_value
+        with pytest.raises(ProbeError):
+            validate_probe_result(bad)
 
 
 def test_error_classifier_returns_only_fixed_codes():
@@ -241,21 +224,24 @@ def test_probe_service_saves_only_safe_summary_and_preserves_connection_state(tm
             "last_success_at": "2026-07-28T01:00:00+00:00",
         }
     )
-    before_credentials = connection_store.credentials_path.read_bytes()
-    before_shops = connection_store.shops_path.read_bytes()
-    before_state = connection_store.state_path.read_bytes()
+    before = {
+        "credentials": connection_store.credentials_path.read_bytes(),
+        "shops": connection_store.shops_path.read_bytes(),
+        "state": connection_store.state_path.read_bytes(),
+    }
 
     result_store = LingxingProbeResultStore(tmp_path)
     service = LingxingReadOnlyProbeService(
-        connection_store,
-        result_store,
-        provider_factory=FakeProbeProvider,
+        connection_store, result_store, provider_factory=FakeProbeProvider
     )
     assert service.trigger() is True
     state = wait_for_probe(service)
     assert state["status"] == "success"
     assert state["message_code"] == "probe_completed"
-    assert {item["dataset"] for item in state["datasets"]} == {"orders", "sales_traffic"}
+    assert {item["dataset"] for item in state["datasets"]} == {
+        "orders",
+        "sales_traffic",
+    }
 
     saved = result_store.path.read_text(encoding="utf-8")
     for forbidden in (
@@ -267,9 +253,9 @@ def test_probe_service_saves_only_safe_summary_and_preserves_connection_state(tm
         "MARKETPLACE-SYNTHETIC-SECRET",
     ):
         assert forbidden not in saved
-    assert connection_store.credentials_path.read_bytes() == before_credentials
-    assert connection_store.shops_path.read_bytes() == before_shops
-    assert connection_store.state_path.read_bytes() == before_state
+    assert connection_store.credentials_path.read_bytes() == before["credentials"]
+    assert connection_store.shops_path.read_bytes() == before["shops"]
+    assert connection_store.state_path.read_bytes() == before["state"]
 
 
 def test_probe_failure_keeps_previous_success(tmp_path):
@@ -292,9 +278,7 @@ def test_probe_failure_keeps_previous_success(tmp_path):
             raise RuntimeError("app_secret=SYNTHETIC-SECRET")
 
     service = LingxingReadOnlyProbeService(
-        connection_store,
-        result_store,
-        provider_factory=FailingProbe,
+        connection_store, result_store, provider_factory=FailingProbe
     )
     assert service.trigger() is True
     state = wait_for_probe(service)
@@ -304,7 +288,7 @@ def test_probe_failure_keeps_previous_success(tmp_path):
     assert "SYNTHETIC" not in result_store.path.read_text(encoding="utf-8")
 
 
-def test_local_probe_http_endpoints_require_session_and_return_safe_summary(tmp_path):
+def test_local_probe_http_endpoints_require_same_origin_session(tmp_path):
     data_root = tmp_path / "agent-data"
     protector = TestOnlyProtector()
     seed = LingxingLocalStore(data_root, protector=protector)
@@ -322,14 +306,17 @@ def test_local_probe_http_endpoints_require_session_and_return_safe_summary(tmp_
     with TestClient(app) as client:
         assert client.get("/v1/lingxing/probe").status_code == 401
         assert client.get("/lingxing").status_code == 200
-        initial = client.get("/v1/lingxing/probe")
-        assert initial.status_code == 200
-        started = client.post("/v1/lingxing/probe")
+        assert client.get(
+            "/v1/lingxing/probe", headers=SAME_ORIGIN
+        ).status_code == 200
+        started = client.post("/v1/lingxing/probe", headers=SAME_ORIGIN)
         assert started.status_code == 202
         deadline = time.monotonic() + 5
         result = None
         while time.monotonic() < deadline:
-            result = client.get("/v1/lingxing/probe").json()
+            result = client.get(
+                "/v1/lingxing/probe", headers=SAME_ORIGIN
+            ).json()
             if not result["running"]:
                 break
             time.sleep(0.02)
