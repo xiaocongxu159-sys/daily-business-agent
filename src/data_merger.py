@@ -404,19 +404,35 @@ def merge_inventory_to_daily(daily_sku, inventory_agg, inventory_detail=None):
     inventory = standardize_identity_fields(_ensure_sku(inventory_agg), log_default=False)
     for column in INVENTORY_METRICS:
         inventory[column] = _numeric(inventory, column)
+
+    daily_keys = _series(inventory, "daily_offer_key", pd.NA)
+    dated_mask = daily_keys.notna() & daily_keys.astype(str).str.strip().ne("")
+    dated_inventory = inventory.loc[dated_mask].copy()
+    undated_inventory = inventory.loc[~dated_mask].copy()
+
+    daily_values = {}
+    for daily_offer_key, group in dated_inventory.groupby("daily_offer_key"):
+        daily_values[daily_offer_key] = group[INVENTORY_METRICS].sum().to_dict()
+
     offer_values = {}
-    for offer_key, group in inventory[inventory["offer_key"].notna()].groupby("offer_key"):
-        offer_values[offer_key] = group[INVENTORY_METRICS].sum().to_dict()
+    if not undated_inventory.empty:
+        scoped = undated_inventory[undated_inventory["offer_key"].notna()]
+        for offer_key, group in scoped.groupby("offer_key"):
+            offer_values[offer_key] = group[INVENTORY_METRICS].sum().to_dict()
+
     legacy_values = {}
-    for sku, group in inventory[inventory["SKU"].ne("")].groupby("SKU"):
-        if group["store_key"].nunique(dropna=True) <= 1:
-            legacy_values[_clean_sku_key(sku)] = group[INVENTORY_METRICS].sum().to_dict()
+    if not undated_inventory.empty:
+        for sku, group in undated_inventory[undated_inventory["SKU"].ne("")].groupby("SKU"):
+            if group["store_key"].nunique(dropna=True) <= 1:
+                legacy_values[_clean_sku_key(sku)] = group[INVENTORY_METRICS].sum().to_dict()
 
     statuses = []
     for index, row in result.iterrows():
-        values = offer_values.get(row.get("offer_key")) or legacy_values.get(
-            _clean_sku_key(row.get("SKU"))
-        )
+        values = daily_values.get(row.get("daily_offer_key"))
+        if values is None:
+            values = offer_values.get(row.get("offer_key")) or legacy_values.get(
+                _clean_sku_key(row.get("SKU"))
+            )
         if values is None:
             statuses.append("identity_unmatched")
             for column in INVENTORY_METRICS:
