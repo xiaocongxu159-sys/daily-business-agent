@@ -21,6 +21,10 @@ def test_current_implemented_provider_scope_is_not_overstated():
     assert BUSINESS_DATASETS["ads_sp_product_daily"].status is ContractStatus.CONFIRMED_SDK
     assert BUSINESS_DATASETS["fba_inventory_snapshot"].status is ContractStatus.CONFIRMED_SDK
 
+    profiles = BUSINESS_DATASETS["ad_profiles"]
+    assert profiles.status is ContractStatus.CONFIRMED_SDK
+    assert profiles.source_method == "api.ads.AdProfiles"
+
     traffic = BUSINESS_DATASETS["sales_traffic"]
     assert traffic.status is ContractStatus.REQUIRES_SDK_EXTENSION
     assert traffic.report_type == SALES_TRAFFIC_REPORT_TYPE
