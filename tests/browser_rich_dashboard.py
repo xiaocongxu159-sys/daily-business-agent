@@ -106,7 +106,7 @@ def main() -> int:
                         }
                         for chart_id, expected_labels in axis_expectations.items():
                             labels = page.locator(f"#{chart_id} [data-axis-label]")
-                            actual = labels.all_inner_texts()
+                            actual = labels.all_text_contents()
                             assert actual == expected_labels, (chart_id, actual, expected_labels)
                             for index in range(labels.count()):
                                 box = labels.nth(index).bounding_box()
