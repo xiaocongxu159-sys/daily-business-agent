@@ -15,6 +15,12 @@ from pydantic import BaseModel, Field, SecretStr
 from agent.app import create_app
 from agent.lingxing_connection_package import ConnectionPackageError
 from agent.lingxing_package_import import PendingConnectionPackageStore
+from agent.lingxing_probe import (
+    LingxingProbeProvider,
+    LingxingProbeResultStore,
+    LingxingReadOnlyProbeService,
+    TlsSdkLingxingProbeProvider,
+)
 from agent.lingxing_secure_store import LingxingCredentials, LingxingLocalStore, SecretProtector
 from agent.lingxing_service import LingxingProvider
 from agent.lingxing_tls_proxy import TlsLingxingSyncService, TlsSdkLingxingProvider
@@ -51,6 +57,7 @@ def attach_lingxing(
     app: FastAPI,
     *,
     provider_factory: Callable[[], LingxingProvider] = TlsSdkLingxingProvider,
+    probe_provider_factory: Callable[[], LingxingProbeProvider] = TlsSdkLingxingProbeProvider,
     protector: SecretProtector | None = None,
     start_service: bool = True,
 ) -> FastAPI:
@@ -58,9 +65,17 @@ def attach_lingxing(
     local_ui_path = Path(__file__).resolve().parent / "static" / "lingxing.html"
     store = LingxingLocalStore(settings.data_root, protector=protector)
     service = TlsLingxingSyncService(store, provider_factory=provider_factory)
+    probe_store = LingxingProbeResultStore(settings.data_root)
+    probe_service = LingxingReadOnlyProbeService(
+        store,
+        probe_store,
+        provider_factory=probe_provider_factory,
+    )
     pending_packages = PendingConnectionPackageStore()
     app.state.lingxing_store = store
     app.state.lingxing_service = service
+    app.state.lingxing_probe_store = probe_store
+    app.state.lingxing_probe_service = probe_service
     app.state.pending_connection_packages = pending_packages
 
     original_lifespan = app.router.lifespan_context
@@ -71,6 +86,7 @@ def attach_lingxing(
             try:
                 yield
             finally:
+                probe_service.stop()
                 service.stop()
 
     app.router.lifespan_context = integrated_lifespan
@@ -104,7 +120,9 @@ def attach_lingxing(
     def lingxing_ui() -> HTMLResponse:
         if not local_ui_path.is_file():
             raise HTTPException(status_code=500, detail="Lingxing local UI file is missing")
-        response = _apply_local_page_headers(HTMLResponse(local_ui_path.read_text(encoding="utf-8")))
+        response = _apply_local_page_headers(
+            HTMLResponse(local_ui_path.read_text(encoding="utf-8"))
+        )
         response.set_cookie(
             "agent_session",
             app.state.sessions.issue(),
@@ -124,6 +142,25 @@ def attach_lingxing(
     @app.get("/v1/lingxing/shops", dependencies=[Depends(require_local_auth)])
     def lingxing_shops() -> dict:
         return {"shops": store.load_shops(), "state": service.public_status()}
+
+    @app.get("/v1/lingxing/probe", dependencies=[Depends(require_local_auth)])
+    def lingxing_probe_status() -> dict:
+        return probe_service.public_status()
+
+    @app.post(
+        "/v1/lingxing/probe",
+        status_code=202,
+        dependencies=[Depends(require_local_auth)],
+    )
+    def run_lingxing_probe() -> dict:
+        if not store.has_credentials():
+            raise HTTPException(status_code=400, detail="尚未配置领星连接")
+        started = probe_service.trigger()
+        return {
+            "started": started,
+            "message": "已开始只读字段探测。" if started else "只读字段探测已经在运行。",
+            "state": probe_service.public_status(),
+        }
 
     @app.post("/v1/lingxing/stage-package", dependencies=[Depends(require_local_auth)])
     def stage_lingxing_package(payload: LingxingStagePackageRequest) -> dict:
@@ -202,6 +239,7 @@ def create_integrated_app(
     token: str | None = None,
     *,
     provider_factory: Callable[[], LingxingProvider] = TlsSdkLingxingProvider,
+    probe_provider_factory: Callable[[], LingxingProbeProvider] = TlsSdkLingxingProbeProvider,
     protector: SecretProtector | None = None,
     start_service: bool = True,
 ) -> FastAPI:
@@ -210,6 +248,7 @@ def create_integrated_app(
     return attach_lingxing(
         app,
         provider_factory=provider_factory,
+        probe_provider_factory=probe_provider_factory,
         protector=protector,
         start_service=start_service,
     )
