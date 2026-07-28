@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 """Credential-free foundations for future Lingxing business-data sync.
 
-Nothing in this module opens a network connection or reads credentials.  The
-network-facing callables are injected so pagination, report polling and request
-payloads can be verified with synthetic responses before a real account is
-used.
+This module never opens a network connection or reads credentials. Network
+callables are injected so pagination, report polling, payloads and local
+persistence can be verified with synthetic data before real-account access.
 """
 from __future__ import annotations
 
 import asyncio
 import hashlib
-import inspect
 import json
 import os
 import re
@@ -20,7 +18,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Any, Literal, Protocol
 
 from agent.lingxing_business_contract import (
     BUSINESS_DATASETS,
@@ -28,7 +26,6 @@ from agent.lingxing_business_contract import (
     SALES_TRAFFIC_REPORT_TYPE,
 )
 
-T = TypeVar("T")
 _MISSING = object()
 _DATASET_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _GENERATION_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z_[0-9a-f]{16}$")
@@ -36,22 +33,15 @@ _OPTIONS_KEYS = {"report_options", "reportOptions"}
 _SENSITIVE_KEYS = {
     "appid",
     "appsecret",
-    "access_token",
     "accesstoken",
-    "refresh_token",
     "refreshtoken",
-    "proxy_url",
     "proxyurl",
-    "relay_password",
     "relaypassword",
-    "certificate_sha256",
     "certificatesha256",
     "authorization",
     "sign",
     "signature",
-    "download_url",
     "downloadurl",
-    "x_amz_signature",
     "xamzsignature",
 }
 
@@ -85,10 +75,9 @@ def utc_now() -> str:
 
 
 def _get_field(value: Any, name: str, default: Any = _MISSING) -> Any:
-    if isinstance(value, Mapping):
-        if name in value:
-            return value[name]
-    elif hasattr(value, name):
+    if isinstance(value, Mapping) and name in value:
+        return value[name]
+    if not isinstance(value, Mapping) and hasattr(value, name):
         return getattr(value, name)
     if default is _MISSING:
         raise PaginationError(f"response is missing {name}")
@@ -191,7 +180,9 @@ class SalesTrafficReportRequest:
 
     def validated(self) -> "SalesTrafficReportRequest":
         seller_id = self.seller_id.strip()
-        marketplace_ids = tuple(dict.fromkeys(item.strip() for item in self.marketplace_ids if item.strip()))
+        marketplace_ids = tuple(
+            dict.fromkeys(item.strip() for item in self.marketplace_ids if item.strip())
+        )
         if not seller_id:
             raise ValueError("seller_id is required")
         if not marketplace_ids:
@@ -215,7 +206,9 @@ class SalesTrafficReportRequest:
     def to_body(self, *, options_key: str) -> dict[str, Any]:
         request = self.validated()
         if options_key not in _OPTIONS_KEYS:
-            raise ValueError("options_key must be explicitly report_options or reportOptions")
+            raise ValueError(
+                "options_key must be explicitly report_options or reportOptions"
+            )
         return {
             "seller_id": request.seller_id,
             "marketplace_ids": list(request.marketplace_ids),
@@ -233,21 +226,19 @@ async def request_sales_traffic_report(
     *,
     options_key: str,
 ) -> Any:
-    """Send the explicitly extended report request through the SDK signer.
+    """Send an explicitly shaped request through the existing SDK signer.
 
-    The transport key is deliberately mandatory.  A controlled field probe must
-    establish whether the Lingxing endpoint accepts ``report_options`` or
-    ``reportOptions``; this helper never silently retries another shape.
+    A controlled probe must determine which transport key Lingxing accepts. The
+    helper never silently retries another shape.
     """
 
     signer = getattr(source_api, "_request_with_sign", None)
     if not callable(signer):
         raise TypeError("source_api does not provide the signed request method")
-    body = request.to_body(options_key=options_key)
     return await signer(
         "POST",
         BUSINESS_DATASETS["sales_traffic"].endpoint,
-        body=body,
+        body=request.to_body(options_key=options_key),
     )
 
 
@@ -288,20 +279,29 @@ async def poll_report_task(
     interval_seconds: float = 2.0,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> ReportDownloadTicket:
-    """Poll an async report without persisting or logging the signed URL."""
+    """Poll an async report without persisting or logging its signed URL."""
 
     task_id = str(task_id or "").strip()
     if not task_id:
         raise ValueError("task_id is required")
     if max_attempts <= 0 or interval_seconds < 0:
         raise ValueError("invalid report polling limits")
-    pending = {"PENDING", "QUEUED", "IN_QUEUE", "IN_PROGRESS", "PROCESSING", "RUNNING"}
+    pending = {
+        "PENDING",
+        "QUEUED",
+        "IN_QUEUE",
+        "IN_PROGRESS",
+        "PROCESSING",
+        "RUNNING",
+    }
     complete = {"DONE", "SUCCESS", "SUCCEEDED", "COMPLETED", "FINISHED"}
     failed = {"FAILED", "FATAL", "CANCELLED", "CANCELED", "EXPIRED"}
 
     for attempt in range(max_attempts):
         data = _report_data(await fetch_status(task_id))
-        status = str(data.get("progress_status") or data.get("status") or "").strip().upper()
+        status = str(
+            data.get("progress_status") or data.get("status") or ""
+        ).strip().upper()
         if not status:
             raise ReportTaskError("report task response is missing progress_status")
         if status in failed:
@@ -310,12 +310,16 @@ async def poll_report_task(
             document_id = str(data.get("report_document_id") or "").strip()
             url = str(data.get("url") or "").strip()
             if not document_id or not url:
-                raise ReportTaskError("completed report task is missing document id or download URL")
+                raise ReportTaskError(
+                    "completed report task is missing document id or download URL"
+                )
             return ReportDownloadTicket(
                 task_id=task_id,
                 progress_status=status,
                 report_document_id=document_id,
-                compression_algorithm=str(data.get("compression_algorithm") or "").strip(),
+                compression_algorithm=str(
+                    data.get("compression_algorithm") or ""
+                ).strip(),
                 download_url=url,
             )
         if status not in pending:
@@ -326,15 +330,16 @@ async def poll_report_task(
 
 
 def _normalized_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9_]", "", value.lower().replace("-", "_"))
+    return re.sub(r"[^a-z0-9]", "", str(value).lower())
 
 
 def _reject_sensitive(value: Any, path: str = "payload") -> None:
     if isinstance(value, Mapping):
         for key, child in value.items():
-            name = _normalized_key(str(key))
-            if name in _SENSITIVE_KEYS:
-                raise DatasetStoreError(f"{path} contains forbidden sensitive field {key}")
+            if _normalized_key(str(key)) in _SENSITIVE_KEYS:
+                raise DatasetStoreError(
+                    f"{path} contains forbidden sensitive field {key}"
+                )
             _reject_sensitive(child, f"{path}.{key}")
     elif isinstance(value, (list, tuple)):
         for index, child in enumerate(value):
@@ -345,11 +350,18 @@ def redact_sensitive_text(value: Any, *, limit: int = 1000) -> str:
     """Return a bounded diagnostic string with common secret forms removed."""
 
     text = str(value or "")
-    text = re.sub(r"(?i)\bBearer\s+[^\s,;]+", "Bearer <redacted>", text)
-    text = re.sub(r"(https?://)([^/@\s:]+):([^/@\s]+)@", r"\1<redacted>:<redacted>@", text)
+    text = re.sub(
+        r"(?i)\bBearer\s+[^\s,;]+", "Bearer <redacted>", text
+    )
+    text = re.sub(
+        r"(https?://)([^/@\s:]+):([^/@\s]+)@",
+        r"\1<redacted>:<redacted>@",
+        text,
+    )
     names = (
-        r"app[_-]?secret|access[_-]?token|refresh[_-]?token|proxy[_-]?url|"
-        r"relay[_-]?password|certificate[_-]?sha256|x-amz-signature|signature|sign"
+        r"app[_-]?id|app[_-]?secret|access[_-]?token|refresh[_-]?token|"
+        r"proxy[_-]?url|relay[_-]?password|certificate[_-]?sha256|"
+        r"x-amz-signature|signature|sign"
     )
     text = re.sub(
         rf"(?i)({names})(\s*[:=]\s*)([\"']?)[^\s,&;\"']+",
@@ -366,10 +378,18 @@ def redact_sensitive_text(value: Any, *, limit: int = 1000) -> str:
 
 def _atomic_json_write(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=str(path.parent)
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            json.dump(
+                payload,
+                handle,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
@@ -382,14 +402,18 @@ def _atomic_json_write(path: Path, payload: Any) -> None:
 
 
 def _canonical_bytes(payload: Any) -> bytes:
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _json_clone(value: Any) -> Any:
     try:
         return json.loads(_canonical_bytes(value).decode("utf-8"))
     except (TypeError, ValueError) as exc:
-        raise DatasetStoreError("dataset payload must be JSON serializable") from exc
+        raise DatasetStoreError(
+            "dataset payload must be JSON serializable"
+        ) from exc
 
 
 @dataclass(frozen=True)
@@ -403,7 +427,7 @@ class DatasetSnapshot:
 
 
 class LingxingDatasetStore:
-    """Generation-based local store whose current pointer changes atomically."""
+    """Generation store whose current pointer is changed only after full write."""
 
     def __init__(
         self,
@@ -434,25 +458,44 @@ class LingxingDatasetStore:
         return path
 
     @staticmethod
-    def _identity(row: Mapping[str, Any], fields: Sequence[str], dataset: str) -> tuple[Any, ...]:
+    def _identity(
+        row: Mapping[str, Any], fields: Sequence[str], dataset: str
+    ) -> tuple[Any, ...]:
         values: list[Any] = []
         for field_name in fields:
-            if field_name not in row or row[field_name] is None or row[field_name] == "":
-                raise DatasetStoreError(f"{dataset}: missing identity field {field_name}")
+            if (
+                field_name not in row
+                or row[field_name] is None
+                or row[field_name] == ""
+            ):
+                raise DatasetStoreError(
+                    f"{dataset}: missing identity field {field_name}"
+                )
             values.append(row[field_name])
         return tuple(values)
 
-    def _validated_rows(self, dataset: str, rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    def _validated_rows(
+        self, dataset: str, rows: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
         contract = BUSINESS_DATASETS[dataset]
         output: list[dict[str, Any]] = []
         for index, raw in enumerate(rows):
             if not isinstance(raw, Mapping):
-                raise DatasetStoreError(f"{dataset}: row {index} must be an object")
+                raise DatasetStoreError(
+                    f"{dataset}: row {index} must be an object"
+                )
             row = _json_clone(dict(raw))
             _reject_sensitive(row, f"{dataset}[{index}]")
-            missing = [name for name in contract.required_output_fields if name not in row]
+            missing = [
+                name
+                for name in contract.required_output_fields
+                if name not in row
+            ]
             if missing:
-                raise DatasetStoreError(f"{dataset}: row {index} is missing required fields: {', '.join(missing)}")
+                raise DatasetStoreError(
+                    f"{dataset}: row {index} is missing required fields: "
+                    + ", ".join(missing)
+                )
             self._identity(row, contract.identity_fields, dataset)
             output.append(row)
         return output
@@ -466,17 +509,35 @@ class LingxingDatasetStore:
             pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
             generation = str(pointer["generation"])
             generation_dir = self._generation_dir(dataset, generation)
-            rows = json.loads((generation_dir / "rows.json").read_text(encoding="utf-8"))
-            metadata = json.loads((generation_dir / "metadata.json").read_text(encoding="utf-8"))
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise DatasetStoreError(f"{dataset}: current generation cannot be read") from exc
+            rows = json.loads(
+                (generation_dir / "rows.json").read_text(encoding="utf-8")
+            )
+            metadata = json.loads(
+                (generation_dir / "metadata.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            raise DatasetStoreError(
+                f"{dataset}: current generation cannot be read"
+            ) from exc
         if not isinstance(rows, list) or not isinstance(metadata, Mapping):
             raise DatasetStoreError(f"{dataset}: invalid generation files")
         digest = hashlib.sha256(_canonical_bytes(rows)).hexdigest()
-        if metadata.get("dataset") != dataset or metadata.get("generation") != generation:
-            raise DatasetStoreError(f"{dataset}: generation metadata mismatch")
-        if metadata.get("data_sha256") != digest or int(metadata.get("row_count", -1)) != len(rows):
-            raise DatasetStoreError(f"{dataset}: generation integrity check failed")
+        if (
+            metadata.get("dataset") != dataset
+            or metadata.get("generation") != generation
+        ):
+            raise DatasetStoreError(
+                f"{dataset}: generation metadata mismatch"
+            )
+        if (
+            metadata.get("data_sha256") != digest
+            or int(metadata.get("row_count", -1)) != len(rows)
+        ):
+            raise DatasetStoreError(
+                f"{dataset}: generation integrity check failed"
+            )
         checkpoint = metadata.get("checkpoint") or {}
         if not isinstance(checkpoint, Mapping):
             raise DatasetStoreError(f"{dataset}: invalid checkpoint")
@@ -511,16 +572,26 @@ class LingxingDatasetStore:
             current = self.load(dataset)
             if current is not None:
                 for row in current.rows:
-                    merged[self._identity(row, contract.identity_fields, dataset)] = dict(row)
+                    key = self._identity(
+                        row, contract.identity_fields, dataset
+                    )
+                    merged[key] = dict(row)
         for row in incoming:
-            merged[self._identity(row, contract.identity_fields, dataset)] = row
+            key = self._identity(row, contract.identity_fields, dataset)
+            merged[key] = row
         final_rows = [
             merged[key]
-            for key in sorted(merged, key=lambda item: _canonical_bytes(item))
+            for key in sorted(
+                merged, key=lambda item: _canonical_bytes(list(item))
+            )
         ]
+
         timestamp = committed_at or utc_now()
         _parse_aware_time(timestamp, "committed_at")
-        generation = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ_") + uuid.uuid4().hex[:16]
+        generation = (
+            datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ_")
+            + uuid.uuid4().hex[:16]
+        )
         generation_dir = self._generation_dir(dataset, generation)
         generation_dir.mkdir(parents=True, exist_ok=False)
         digest = hashlib.sha256(_canonical_bytes(final_rows)).hexdigest()
@@ -544,22 +615,36 @@ class LingxingDatasetStore:
         _atomic_json_write(generation_dir / "metadata.json", metadata)
         if self._before_activate is not None:
             self._before_activate(generation_dir)
-        _atomic_json_write(dataset_dir / "current.json", {"generation": generation})
-        _atomic_json_write(dataset_dir / "sync_status.json", checkpoint_payload)
+        _atomic_json_write(
+            dataset_dir / "current.json", {"generation": generation}
+        )
+        _atomic_json_write(
+            dataset_dir / "sync_status.json", checkpoint_payload
+        )
         snapshot = self.load(dataset)
         if snapshot is None:
-            raise DatasetStoreError(f"{dataset}: committed generation was not activated")
+            raise DatasetStoreError(
+                f"{dataset}: committed generation was not activated"
+            )
         return snapshot
 
-    def mark_syncing(self, dataset: str, *, attempted_at: str | None = None) -> dict[str, Any]:
+    def mark_syncing(
+        self, dataset: str, *, attempted_at: str | None = None
+    ) -> dict[str, Any]:
         current = self.load(dataset)
         payload = {
             "status": "syncing",
             "last_attempt_at": attempted_at or utc_now(),
-            "last_success_at": current.checkpoint.get("last_success_at") if current else None,
+            "last_success_at": (
+                current.checkpoint.get("last_success_at")
+                if current
+                else None
+            ),
             "current_generation": current.generation if current else None,
         }
-        _atomic_json_write(self._dataset_dir(dataset) / "sync_status.json", payload)
+        _atomic_json_write(
+            self._dataset_dir(dataset) / "sync_status.json", payload
+        )
         return payload
 
     def record_failure(
@@ -571,15 +656,24 @@ class LingxingDatasetStore:
         attempted_at: str | None = None,
     ) -> dict[str, Any]:
         current = self.load(dataset)
+        code = re.sub(
+            r"[^a-z0-9_]+", "_", str(error_code).lower()
+        ).strip("_")[:64]
         payload = {
             "status": "failed",
             "last_attempt_at": attempted_at or utc_now(),
-            "last_success_at": current.checkpoint.get("last_success_at") if current else None,
+            "last_success_at": (
+                current.checkpoint.get("last_success_at")
+                if current
+                else None
+            ),
             "current_generation": current.generation if current else None,
-            "error_code": re.sub(r"[^a-z0-9_]+", "_", str(error_code).lower()).strip("_")[:64] or "sync_failed",
+            "error_code": code or "sync_failed",
             "message": redact_sensitive_text(error),
         }
-        _atomic_json_write(self._dataset_dir(dataset) / "sync_status.json", payload)
+        _atomic_json_write(
+            self._dataset_dir(dataset) / "sync_status.json", payload
+        )
         return payload
 
     def load_status(self, dataset: str) -> dict[str, Any]:
@@ -588,13 +682,23 @@ class LingxingDatasetStore:
             current = self.load(dataset)
             return {
                 "status": "success" if current else "idle",
-                "last_success_at": current.checkpoint.get("last_success_at") if current else None,
-                "current_generation": current.generation if current else None,
+                "last_success_at": (
+                    current.checkpoint.get("last_success_at")
+                    if current
+                    else None
+                ),
+                "current_generation": (
+                    current.generation if current else None
+                ),
             }
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError) as exc:
-            raise DatasetStoreError(f"{dataset}: sync status cannot be read") from exc
+            raise DatasetStoreError(
+                f"{dataset}: sync status cannot be read"
+            ) from exc
         if not isinstance(value, dict):
-            raise DatasetStoreError(f"{dataset}: sync status must be an object")
+            raise DatasetStoreError(
+                f"{dataset}: sync status must be an object"
+            )
         return value
