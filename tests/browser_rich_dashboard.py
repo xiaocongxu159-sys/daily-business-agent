@@ -173,9 +173,11 @@ def main() -> int:
                         assert tooltip.locator(".chart-tooltip-dot").count() == 2
                         events.append(f"tooltip={json.dumps(tooltip_style, ensure_ascii=False)}")
                         page.screenshot(
-                            path=str(artifact_dir / "rich-dashboard-tooltip-pass.png"),
-                            full_page=True,
+                            path=str(artifact_dir / "rich-dashboard-tooltip-viewport.png"),
+                            full_page=False,
                         )
+                        tooltip.wait_for(state="visible", timeout=2_000)
+                        assert (artifact_dir / "rich-dashboard-tooltip-viewport.png").stat().st_size > 10_000
 
                         details = page.locator("#filterDetails")
                         assert not details.evaluate("node => node.open")
