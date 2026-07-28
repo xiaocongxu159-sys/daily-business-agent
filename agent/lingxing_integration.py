@@ -59,13 +59,14 @@ def attach_lingxing(
     probe_provider_factory: Callable[[], LingxingProbeProvider] = (
         DiagnosticTlsSdkLingxingProbeProvider
     ),
+    service_factory: Callable[..., TlsLingxingSyncService] = TlsLingxingSyncService,
     protector: SecretProtector | None = None,
     start_service: bool = True,
 ) -> FastAPI:
     settings: AgentSettings = app.state.settings
     local_ui_path = Path(__file__).resolve().parent / "static" / "lingxing.html"
     store = LingxingLocalStore(settings.data_root, protector=protector)
-    service = TlsLingxingSyncService(store, provider_factory=provider_factory)
+    service = service_factory(store, provider_factory=provider_factory)
     probe_store = DiagnosticLingxingProbeResultStore(settings.data_root)
     probe_service = LingxingReadOnlyProbeService(
         store,
@@ -243,6 +244,7 @@ def create_integrated_app(
     probe_provider_factory: Callable[[], LingxingProbeProvider] = (
         DiagnosticTlsSdkLingxingProbeProvider
     ),
+    service_factory: Callable[..., TlsLingxingSyncService] = TlsLingxingSyncService,
     protector: SecretProtector | None = None,
     start_service: bool = True,
 ) -> FastAPI:
@@ -252,6 +254,7 @@ def create_integrated_app(
         app,
         provider_factory=provider_factory,
         probe_provider_factory=probe_provider_factory,
+        service_factory=service_factory,
         protector=protector,
         start_service=start_service,
     )

@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--verify-probe-runtime",
         action="store_true",
-        help="Verify the frozen privacy-safe probe store and exit without reading user data.",
+        help="Verify frozen privacy-safe probe and local sync stores without reading user data.",
     )
     return parser
 
@@ -54,12 +54,19 @@ def verify_sdk_runtime() -> None:
 
 
 def verify_probe_runtime() -> None:
-    """Exercise only synthetic probe metadata inside the frozen executable."""
+    """Exercise only synthetic probe and business metadata inside the frozen EXE."""
+    from agent.lingxing_available_sync import (
+        AVAILABLE_DATASETS,
+        UNAVAILABLE_DATASETS,
+        AvailableLingxingSyncService,
+    )
     from agent.lingxing_probe import LingxingProbeResultStore
+    from agent.lingxing_sync_foundation import LingxingDatasetStore
 
     with tempfile.TemporaryDirectory(prefix="daily-agent-probe-runtime-") as temp:
-        store = LingxingProbeResultStore(Path(temp))
-        saved = store.save(
+        root = Path(temp)
+        probe_store = LingxingProbeResultStore(root)
+        saved = probe_store.save(
             {
                 "status": "success",
                 "datasets": [
@@ -78,12 +85,52 @@ def verify_probe_runtime() -> None:
                 "message_code": "probe_completed",
             }
         )
-        loaded = store.load()
+        loaded = probe_store.load()
         if saved != loaded or loaded["datasets"][0]["dataset"] != "orders":
             raise RuntimeError("frozen Lingxing probe runtime validation failed")
-        content = store.path.read_text(encoding="utf-8")
+        content = probe_store.path.read_text(encoding="utf-8")
         if "amazon_order_id" not in content or "app_secret" in content:
             raise RuntimeError("frozen Lingxing probe privacy contract failed")
+
+        dataset_store = LingxingDatasetStore(root)
+        snapshot = dataset_store.commit(
+            "orders",
+            [
+                {
+                    "sid": 101,
+                    "amazon_order_id": "SYNTHETIC-ORDER-1",
+                    "order_status": "Shipped",
+                    "asin": "B0SYNTHETIC",
+                    "msku": "MSKU-1",
+                    "lsku": "LSKU-1",
+                    "order_qty": 1,
+                    "sales_amt": 10.0,
+                    "currency_code": "USD",
+                    "purchase_time_utc": "2026-07-27T01:00:00+00:00",
+                    "purchase_date_loc": "2026-07-26",
+                    "update_time_ts": 1785114000,
+                }
+            ],
+            checkpoint={"date_from": "2026-07-26", "date_to": "2026-07-27"},
+        )
+        reloaded = dataset_store.load("orders")
+        if reloaded is None or reloaded.generation != snapshot.generation:
+            raise RuntimeError("frozen Lingxing dataset generation validation failed")
+        status = dataset_store.load_status("orders")
+        if status.get("status") != "success" or len(reloaded.rows) != 1:
+            raise RuntimeError("frozen Lingxing dataset status validation failed")
+        dataset_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in dataset_store.root.rglob("*.json")
+        )
+        if "SYNTHETIC-ORDER-1" not in dataset_text or "app_secret" in dataset_text:
+            raise RuntimeError("frozen Lingxing dataset privacy contract failed")
+        if (
+            "orders" not in AVAILABLE_DATASETS
+            or UNAVAILABLE_DATASETS.get("sales_traffic") != "sdk_contract_mismatch"
+            or AvailableLingxingSyncService is None
+        ):
+            raise RuntimeError("frozen Lingxing available sync contract failed")
 
 
 def _already_running(url: str) -> bool:

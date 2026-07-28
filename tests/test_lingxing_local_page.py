@@ -53,6 +53,13 @@ def test_lingxing_static_file_exists() -> None:
     html = path.read_text(encoding="utf-8")
     assert "领星自动同步" in html
     assert 'id="package-ready"' in html
+    assert 'id="business-datasets"' in html
+    assert "经营数据同步状态" in html
+    assert "Sessions/PV" in html
+    assert "两项都不会伪造成 0" in html
+    assert 'data-business-dataset=' in html
+    assert 'partial_success:"部分更新"' in html
+    assert 'unavailable:"暂不可用"' in html
     assert 'type="file"' not in html
     assert 'id="proxy-url"' not in html
     assert ".sha256" not in html
@@ -97,7 +104,9 @@ def test_integrated_app_reports_candidate_version_and_both_pages(tmp_path: Path)
 def test_lingxing_route_endpoint_returns_html(tmp_path: Path) -> None:
     response = lingxing_route(build_app(tmp_path)).endpoint()
     assert isinstance(response, HTMLResponse)
-    assert "领星自动同步" in response.body.decode("utf-8")
+    text = response.body.decode("utf-8")
+    assert "领星自动同步" in text
+    assert "经营数据同步状态" in text
 
 
 def test_lingxing_page_has_local_only_resources_and_security_headers(tmp_path: Path) -> None:
