@@ -71,12 +71,14 @@ def main() -> int:
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch(headless=True)
                     context = browser.new_context(viewport={"width": 1440, "height": 800})
+
                     def inspect_request(request) -> None:
                         parsed = urlsplit(request.url)
                         if parsed.scheme in {"data", "blob", "about"}:
                             return
                         if parsed.hostname not in {"127.0.0.1", "localhost"}:
                             external.append(request.url)
+
                     context.on("request", inspect_request)
                     page = context.new_page()
                     page.on("console", lambda message: events.append(f"console[{message.type}]: {message.text}"))
@@ -95,6 +97,26 @@ def main() -> int:
                         assert "每日经营动态看板" in page.locator("h1").inner_text()
                         assert "13020.00" in page.locator("#cards").inner_text()
                         events.append("sales=13020.00")
+
+                        axis_expectations = {
+                            "trafficChart": ["流量（Sessions / PV）"],
+                            "salesChart": ["订单量（单）", "销售额（金额）"],
+                            "adsChart": ["广告花费（金额）", "广告销售额（金额）"],
+                            "inventoryChart": ["库存数量（件）"],
+                        }
+                        for chart_id, expected_labels in axis_expectations.items():
+                            labels = page.locator(f"#{chart_id} [data-axis-label]")
+                            actual = labels.all_inner_texts()
+                            assert actual == expected_labels, (chart_id, actual, expected_labels)
+                            for index in range(labels.count()):
+                                box = labels.nth(index).bounding_box()
+                                assert box is not None and box["width"] > 0 and box["height"] > 0, (
+                                    chart_id,
+                                    index,
+                                    box,
+                                )
+                        events.append("axis_labels=visible-and-complete")
+
                         details = page.locator("#filterDetails")
                         assert not details.evaluate("node => node.open")
                         page.locator("#filterDetails > summary").click()
@@ -143,7 +165,7 @@ def main() -> int:
         raise
     finally:
         (artifact_dir / "rich-dashboard-events.txt").write_text("\n".join(events) + "\n", encoding="utf-8")
-    print("PASS: rich dashboard charts, filters, wheel scrolling and local-only network")
+    print("PASS: rich dashboard charts, axis labels, filters, wheel scrolling and local-only network")
     return 0
 
 
