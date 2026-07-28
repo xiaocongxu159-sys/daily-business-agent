@@ -41,7 +41,7 @@ def test_monthly_plan_does_not_guess_a_private_endpoint():
     assert any("Do not scrape" in note for note in plan.notes)
 
 
-def test_product_and_ad_contracts_keep_store_identity():
+def test_product_and_ad_contracts_keep_stable_store_identity():
     for key in (
         "listings",
         "orders",
@@ -52,8 +52,16 @@ def test_product_and_ad_contracts_keep_store_identity():
     ):
         assert "sid" in BUSINESS_DATASETS[key].identity_fields
 
-    assert BUSINESS_DATASETS["listings"].identity_fields[:2] == ("sid", "msku")
+    assert BUSINESS_DATASETS["listings"].identity_fields == ("sid", "msku")
+    assert BUSINESS_DATASETS["fba_inventory_snapshot"].identity_fields == (
+        "snapshot_date",
+        "sid",
+        "msku",
+    )
     assert "profile_id" in BUSINESS_DATASETS["ads_sp_product_daily"].identity_fields
+    assert "asin" not in BUSINESS_DATASETS["ads_sp_product_daily"].identity_fields
+    assert "msku" not in BUSINESS_DATASETS["ads_sp_product_daily"].identity_fields
+    assert "asin" not in BUSINESS_DATASETS["ads_sd_product_daily"].identity_fields
 
 
 def test_inventory_contract_prevents_cross_date_and_double_count_regressions():
