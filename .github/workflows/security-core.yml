@@ -53,6 +53,7 @@ jobs:
           python -B -m pytest -vv \
             tests/test_lingxing_probe.py \
             tests/test_lingxing_probe_diagnostics.py \
+            tests/test_lingxing_controlled_probe.py \
             2>&1 | tee probe-test-output.txt
       - name: Upload read-only probe test diagnostics
         if: failure()

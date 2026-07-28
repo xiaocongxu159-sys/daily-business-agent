@@ -15,7 +15,7 @@ from pathlib import Path
 
 import uvicorn
 
-from agent.lingxing_integration import create_integrated_app
+from agent.lingxing_controlled_integration import create_integrated_app
 from agent.security import load_or_create_agent_token
 from agent.settings import AgentSettings, default_data_root
 
