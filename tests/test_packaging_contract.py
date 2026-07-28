@@ -20,6 +20,7 @@ def test_required_public_files_exist() -> None:
         "packaging/installer.iss",
         "scripts/public_boundary_scan.py",
         "scripts/verify_windows_installer.ps1",
+        "scripts/verify_running_upgrade.ps1",
         "requirements-build.txt",
         "requirements-ci.txt",
         "README.md",
@@ -68,6 +69,47 @@ def test_installer_preserves_accepted_upgrade_paths_and_single_file_association(
     assert "导入每日经营连接包" in installer
     assert 'Type: filesandordirs; Name: "{app}\_internal"' in installer
     assert "[UninstallDelete]" not in installer
+
+
+def test_installer_live_upgrade_is_fail_safe_before_runtime_delete() -> None:
+    installer = read("packaging/installer.iss")
+    required = (
+        "AllowCancelDuringInstall=no",
+        "CloseApplications=force",
+        "CloseApplicationsFilter=*.*",
+        "function PrepareToInstall",
+        "taskkill /IM {#MyAppExeName} /T /F",
+        "GetActiveTcpListeners()",
+        "base_library.zip",
+        "[IO.FileShare]::None",
+        ".upgrade-backup",
+        "PrepareRuntimeBackup",
+        "RestoreRuntimeBackup",
+        "procedure DeinitializeSetup",
+        "RuntimeBackupPrepared and (not InstallSucceeded)",
+    )
+    for value in required:
+        assert value in installer, value
+
+    prepare_position = installer.index("function PrepareToInstall")
+    backup_position = installer.index("PrepareRuntimeBackup", prepare_position)
+    assert installer.index("StopAgentAndReleaseRuntime", prepare_position) < backup_position
+
+
+def test_windows_gate_covers_running_upgrade_and_locked_runtime_abort() -> None:
+    workflow = read(".github/workflows/windows-installer.yml")
+    verifier = read("scripts/verify_running_upgrade.ps1")
+    assert ".\\scripts\\verify_running_upgrade.ps1" in workflow
+    for required in (
+        "installer did not stop the running Agent process",
+        "stale-running-upgrade-marker.txt",
+        "local UI file is missing",
+        "[IO.FileShare]::None",
+        "locked-runtime upgrade returned unexpected exit code",
+        "blocked upgrade modified existing",
+        "preserve-running-upgrade.txt",
+    ):
+        assert required in verifier, required
 
 
 def test_public_packaging_contains_no_private_server_material() -> None:
