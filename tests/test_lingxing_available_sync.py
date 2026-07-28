@@ -53,6 +53,8 @@ def _listing():
         "status": "Active",
         "deleted": False,
         "update_time_utc": "2026-07-28T00:00:00+00:00",
+        "sales_qty_30d": 12,
+        "unapproved_internal_note": "DO-NOT-STORE",
     }
 
 
@@ -61,6 +63,8 @@ def _order():
         "sid": 101,
         "amazon_order_id": "ORDER-1",
         "order_status": "Shipped",
+        "order_item_status": "Shipped",
+        "fulfillment_channel": "Amazon",
         "asin": "B0SYNTHETIC",
         "msku": "MSKU-1",
         "lsku": "LSKU-1",
@@ -68,8 +72,15 @@ def _order():
         "sales_amt": 19.99,
         "currency_code": "USD",
         "purchase_time_utc": "2026-07-27T01:00:00+00:00",
+        "purchase_time_loc": "2026-07-26 18:00:00",
         "purchase_date_loc": "2026-07-26",
         "update_time_ts": 1785114000,
+        "buyer_name": "PRIVATE BUYER",
+        "buyer_email": "private@example.invalid",
+        "buyer_city": "PRIVATE CITY",
+        "buyer_state": "PRIVATE STATE",
+        "buyer_postcode": "PRIVATE POSTCODE",
+        "merchant_order_id": "PRIVATE-MERCHANT-ORDER",
     }
 
 
@@ -132,6 +143,9 @@ def _inventory():
         "afn_inbound_working_qty": 5,
         "afn_inbound_shipped_qty": 6,
         "afn_inbound_receiving_qty": 7,
+        "age_0_to_30_days_qty": 8,
+        "inventory_value_amt": 99.5,
+        "unapproved_private_value": "DO-NOT-STORE",
     }
 
 
@@ -275,6 +289,27 @@ def test_real_sync_path_excludes_unresolved_sources_and_commits_atomic_datasets(
         assert snapshot is not None
         assert snapshot.rows
 
+    order = store.load("orders").rows[0]
+    for forbidden in (
+        "buyer_name",
+        "buyer_email",
+        "buyer_city",
+        "buyer_state",
+        "buyer_postcode",
+        "merchant_order_id",
+    ):
+        assert forbidden not in order
+    assert order["sales_amt"] == 19.99
+    assert order["purchase_time_loc"] == "2026-07-26 18:00:00"
+
+    listing = store.load("listings").rows[0]
+    assert listing["sales_qty_30d"] == 12
+    assert "unapproved_internal_note" not in listing
+    inventory = store.load("fba_inventory_snapshot").rows[0]
+    assert inventory["age_0_to_30_days_qty"] == 8
+    assert inventory["inventory_value_amt"] == 99.5
+    assert "unapproved_private_value" not in inventory
+
     assert store.load("sales_traffic") is None
     assert store.load("fba_inventory_shared_detail") is None
     assert not any(call[0] in {"sales_traffic", "shared_detail"} for call in calls)
@@ -283,6 +318,24 @@ def test_real_sync_path_excludes_unresolved_sources_and_commits_atomic_datasets(
     assert ("sp", yesterday, 101, 9001, None, 100) in calls
     assert ("sb", yesterday, 101, 9001, None, 100) in calls
     assert ("sd", yesterday, 101, 9001, None, 100) in calls
+
+
+def test_ad_dependency_failure_preserves_old_generation(tmp_path):
+    provider = TlsSdkAvailableDatasetProvider()
+    store = LingxingDatasetStore(tmp_path)
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    old = dict(_sp_row())
+    old.update({"report_date": yesterday, "sid": 101, "profile_id": 9001})
+    previous = store.commit("ads_sp_product_daily", [old])
+    results = {}
+
+    provider._dependency_failure(store, results, "ads_sp_product_daily")
+
+    current = store.load("ads_sp_product_daily")
+    assert current is not None
+    assert current.generation == previous.generation
+    assert results["ads_sp_product_daily"]["error_code"] == "dependency_failed"
+    assert store.load_status("ads_sp_product_daily")["status"] == "failed"
 
 
 def test_dataset_failure_keeps_previous_generation_and_hides_exception_text(tmp_path):
