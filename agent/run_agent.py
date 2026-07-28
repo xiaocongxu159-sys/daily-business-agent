@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import tempfile
 import threading
 import time
 import urllib.error
@@ -32,6 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Verify frozen Lingxing SDK imports and exit without reading user data.",
     )
+    parser.add_argument(
+        "--verify-probe-runtime",
+        action="store_true",
+        help="Verify the frozen privacy-safe probe store and exit without reading user data.",
+    )
     return parser
 
 
@@ -45,6 +51,39 @@ def verify_sdk_runtime() -> None:
         raise RuntimeError(f"Lingxing SDK runtime import failed: {missing}") from exc
     if API is None or ProxyConnector is None:
         raise RuntimeError("Lingxing SDK runtime import returned an invalid object")
+
+
+def verify_probe_runtime() -> None:
+    """Exercise only synthetic probe metadata inside the frozen executable."""
+    from agent.lingxing_probe import LingxingProbeResultStore
+
+    with tempfile.TemporaryDirectory(prefix="daily-agent-probe-runtime-") as temp:
+        store = LingxingProbeResultStore(Path(temp))
+        saved = store.save(
+            {
+                "status": "success",
+                "datasets": [
+                    {
+                        "dataset": "orders",
+                        "status": "no_data",
+                        "fields": ["amazon_order_id", "purchase_date_loc"],
+                        "sampled_rows": 0,
+                        "response_count": 0,
+                        "total_count": 0,
+                        "date_from": "2026-07-27",
+                        "date_to": "2026-07-27",
+                        "error_code": "",
+                    }
+                ],
+                "message_code": "probe_completed",
+            }
+        )
+        loaded = store.load()
+        if saved != loaded or loaded["datasets"][0]["dataset"] != "orders":
+            raise RuntimeError("frozen Lingxing probe runtime validation failed")
+        content = store.path.read_text(encoding="utf-8")
+        if "amazon_order_id" not in content or "app_secret" in content:
+            raise RuntimeError("frozen Lingxing probe privacy contract failed")
 
 
 def _already_running(url: str) -> bool:
@@ -108,6 +147,9 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.verify_sdk_runtime:
         verify_sdk_runtime()
+        return
+    if args.verify_probe_runtime:
+        verify_probe_runtime()
         return
 
     origins = tuple(args.allow_origin) or (
