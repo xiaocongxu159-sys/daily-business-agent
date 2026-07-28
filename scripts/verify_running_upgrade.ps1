@@ -132,6 +132,7 @@ $locker = Start-Process powershell.exe -ArgumentList @(
   "-Target", $runtime,
   "-Marker", $lockMarker
 ) -PassThru
+$lockerReleased = $false
 try {
   foreach ($attempt in 1..40) {
     if (Test-Path -LiteralPath $lockMarker) { break }
@@ -148,6 +149,10 @@ try {
     throw "locked-runtime upgrade returned unexpected exit code: $($blocked.ExitCode)"
   }
 
+  Stop-Process -Id $locker.Id -Force -ErrorAction SilentlyContinue
+  Wait-Process -Id $locker.Id -ErrorAction SilentlyContinue
+  $lockerReleased = $true
+
   $after = @{
     exe = (Get-FileHash -Algorithm SHA256 -LiteralPath $script:Exe).Hash
     runtime = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtime).Hash
@@ -162,8 +167,10 @@ try {
     throw "blocked upgrade left a rollback directory"
   }
 } finally {
-  Stop-Process -Id $locker.Id -Force -ErrorAction SilentlyContinue
-  Wait-Process -Id $locker.Id -ErrorAction SilentlyContinue
+  if (-not $lockerReleased) {
+    Stop-Process -Id $locker.Id -Force -ErrorAction SilentlyContinue
+    Wait-Process -Id $locker.Id -ErrorAction SilentlyContinue
+  }
   Remove-Item -LiteralPath $lockMarker, $lockScript -Force -ErrorAction SilentlyContinue
 }
 
