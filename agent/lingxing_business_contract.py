@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Credential-free contract for future Lingxing business-data synchronization.
 
-The module contains no network client and no customer data.  It fixes the
-public endpoint, grain, identity, pagination and validation rules that must be
+The module contains no network client and no customer data. It fixes the public
+endpoint, grain, identity, pagination and validation rules that must be
 satisfied before live account calls are introduced.
 """
 from __future__ import annotations
@@ -47,7 +47,7 @@ class DatasetContract:
 
 
 SHOP_IDENTITY_FIELDS = ("sid", "seller_id", "marketplace_id", "region")
-PRODUCT_IDENTITY_FIELDS = ("sid", "msku", "asin", "fnsku", "lsku")
+PRODUCT_IDENTITY_FIELDS = ("sid", "msku")
 AD_IDENTITY_FIELDS = ("sid", "profile_id")
 
 SALES_TRAFFIC_REPORT_TYPE = "GET_SALES_AND_TRAFFIC_REPORT"
@@ -84,6 +84,7 @@ BUSINESS_DATASETS: dict[str, DatasetContract] = {
         (
             "Use this endpoint for identity and current listing state, not for daily traffic history.",
             "The stable product join key is sid + msku; ASIN-only joins are not allowed.",
+            "FNSKU is not part of the identity because FBM listings may not have one.",
         ),
     ),
     "orders": DatasetContract(
@@ -100,6 +101,7 @@ BUSINESS_DATASETS: dict[str, DatasetContract] = {
         (
             "Upsert instead of append so corrections replace older rows.",
             "Canceled/refunded treatment requires controlled reconciliation before formulas are locked.",
+            "Do not persist buyer name, email, address, city, state or postcode fields.",
         ),
     ),
     "sales_traffic": DatasetContract(
@@ -138,13 +140,16 @@ BUSINESS_DATASETS: dict[str, DatasetContract] = {
         "api.ads.SpProductReports",
         "/pb/openapi/newad/spProductAdReports",
         ContractStatus.CONFIRMED_SDK,
-        "one report day + sid + profile_id + advertised ASIN/MSKU row",
-        ("report_date", "sid", "profile_id", "campaign_id", "ad_group_id", "ad_id", "asin", "msku"),
+        "one report day + sid + profile_id + advertised product-ad row",
+        ("report_date", "sid", "profile_id", "campaign_id", "ad_group_id", "ad_id"),
         ("report_date", "profile_id", "asin", "msku", "impressions", "clicks", "cost", "orders", "sales"),
         PaginationKind.NEXT_TOKEN,
         "one site-local report date per request; follow next_token until empty",
         14,
-        ("Attribution overlap is a configurable engineering default and requires real-account reconciliation.",),
+        (
+            "Attribution overlap is a configurable engineering default and requires real-account reconciliation.",
+            "ASIN and MSKU are retained as dimensions but are not required identity fields.",
+        ),
     ),
     "ads_sb_campaign_daily": DatasetContract(
         "ads_sb_campaign_daily",
@@ -164,12 +169,13 @@ BUSINESS_DATASETS: dict[str, DatasetContract] = {
         "api.ads.SdProductReports",
         "/pb/openapi/newad/sdProductAdReports",
         ContractStatus.CONFIRMED_SDK,
-        "one report day + sid + profile_id + advertised ASIN row",
-        ("report_date", "sid", "profile_id", "campaign_id", "ad_group_id", "ad_id", "asin"),
+        "one report day + sid + profile_id + advertised product-ad row",
+        ("report_date", "sid", "profile_id", "campaign_id", "ad_group_id", "ad_id"),
         ("report_date", "profile_id", "asin", "impressions", "clicks", "cost", "orders", "sales"),
         PaginationKind.NEXT_TOKEN,
         "one site-local report date per request; follow next_token until empty",
         14,
+        ("ASIN is retained as a dimension but is not required for the local row identity.",),
     ),
     "fba_inventory_snapshot": DatasetContract(
         "fba_inventory_snapshot",
@@ -177,7 +183,7 @@ BUSINESS_DATASETS: dict[str, DatasetContract] = {
         "/erp/sc/routing/fba/fbaStock/fbaList",
         ContractStatus.CONFIRMED_SDK,
         "one snapshot day + sid + msku row",
-        ("snapshot_date", "sid", "msku", "asin", "fnsku"),
+        ("snapshot_date", "sid", "msku"),
         (
             "sid", "asin", "msku", "lsku", "fnsku", "afn_fulfillable_qty", "afn_unsellable_qty",
             "afn_reserved_fc_processing_qty", "afn_reserved_fc_transfers_qty", "afn_reserved_customer_order_qty",
@@ -192,6 +198,7 @@ BUSINESS_DATASETS: dict[str, DatasetContract] = {
             "on_hand_qty = fulfillable + unsellable + reserved",
             "total_with_inbound_qty = on_hand + inbound",
             "Do not add afn_actual_shipped_qty until reconciliation proves it is non-overlapping.",
+            "FNSKU and ASIN remain dimensions; the stable local identity is date + sid + msku.",
         ),
     ),
     "fba_inventory_shared_detail": DatasetContract(
@@ -265,7 +272,13 @@ def validate_contracts() -> tuple[str, ...]:
     if profiles.source_method != "api.ads.AdProfiles":
         errors.append("ad_profiles: confirmed SDK method is api.ads.AdProfiles")
 
+    listings = BUSINESS_DATASETS["listings"]
+    if listings.identity_fields != ("sid", "msku"):
+        errors.append("listings: stable identity must be sid + msku")
+
     inventory = BUSINESS_DATASETS["fba_inventory_snapshot"]
+    if inventory.identity_fields != ("snapshot_date", "sid", "msku"):
+        errors.append("fba_inventory_snapshot: stable identity must be date + sid + msku")
     if "never add snapshots from different dates" not in inventory.date_rule:
         errors.append("fba_inventory_snapshot: cross-date protection is missing")
 
