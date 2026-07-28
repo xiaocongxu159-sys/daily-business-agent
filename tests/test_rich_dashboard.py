@@ -48,6 +48,17 @@ def test_rich_dashboard_is_local_and_contains_expected_charts(tmp_path: Path) ->
     assert "http://" not in html and "https://" not in html
     for chart_id in ("trafficChart", "salesChart", "adsChart", "inventoryChart"):
         assert f'id="{chart_id}"' in html
+    for label in (
+        "流量（Sessions / PV）",
+        "订单量（单）",
+        "销售额（金额）",
+        "广告花费（金额）",
+        "广告销售额（金额）",
+        "库存数量（件）",
+    ):
+        assert label in html
+    assert 'data-axis-label="left"' in html
+    assert 'data-axis-label="right"' in html
     assert 'id="filterDetails"' in html
     assert 'id="dashboard-data"' in html
     assert 'id="cards"' in html
