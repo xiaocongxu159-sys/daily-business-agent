@@ -67,8 +67,8 @@ jobs:
         run: python -m pip_audit --strict --progress-spinner off -r requirements-build.txt
       - name: Build unified installer
         run: .\packaging\build_installer.ps1
-      - name: Verify install, frozen SDK, real analysis, clean upgrade, association and data retention
-        timeout-minutes: 10
+      - name: Verify install, live upgrade, failure rollback, analysis and data retention
+        timeout-minutes: 18
         run: |
           $diagnostic = Join-Path $env:RUNNER_TEMP "windows-verification-error.txt"
           Remove-Item -LiteralPath $diagnostic -Force -ErrorAction SilentlyContinue
@@ -81,6 +81,7 @@ jobs:
           $PSDefaultParameterValues['Invoke-WebRequest:Headers'] = $sameOriginHeaders
           try {
             .\scripts\verify_windows_installer.ps1
+            .\scripts\verify_running_upgrade.ps1
           } catch {
             $_ | Format-List * -Force | Out-String | Set-Content -LiteralPath $diagnostic -Encoding utf8
             throw
@@ -97,6 +98,7 @@ jobs:
             ${{ runner.temp }}/windows-verification-error.txt
             ${{ runner.temp }}/http-analysis-*/**
             ${{ runner.temp }}/DailyBusinessAgentData/jobs/**
+            ${{ runner.temp }}/DailyBusinessAgentRunningUpgradeData/**
             ${{ runner.temp }}/daily-business-agent-*.log
           if-no-files-found: warn
           retention-days: 7
