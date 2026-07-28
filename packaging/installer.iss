@@ -25,7 +25,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 AllowCancelDuringInstall=no
-CloseApplications=force
+CloseApplications=yes
 CloseApplicationsFilter=*.*
 RestartApplications=no
 SetupLogging=yes
@@ -288,4 +288,4 @@ begin
     RestoreRuntimeBackup;
 end;
 
-; 用户数据保存在 %LOCALAPPDATA%\CTJFyrdian\DailyBusinessAgent，升级和卸载都不会删除。
+// 用户数据保存在 %LOCALAPPDATA%\CTJFyrdian\DailyBusinessAgent，升级和卸载都不会删除。
