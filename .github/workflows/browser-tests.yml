@@ -71,8 +71,8 @@ jobs:
           status=$?
           printf 'exit_code=%s\n' "$status" > "$RICH_DASHBOARD_ARTIFACT_DIR/exit-code.txt"
           exit "$status"
-      - name: Upload rich dashboard browser diagnostics
-        if: failure()
+      - name: Upload rich dashboard browser acceptance evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rich-dashboard-browser-${{ github.sha }}
