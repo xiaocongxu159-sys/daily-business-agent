@@ -50,7 +50,10 @@ jobs:
       - name: Test privacy-safe Lingxing read-only probe
         run: |
           set -o pipefail
-          python -B -m pytest -vv tests/test_lingxing_probe.py 2>&1 | tee probe-test-output.txt
+          python -B -m pytest -vv \
+            tests/test_lingxing_probe.py \
+            tests/test_lingxing_probe_diagnostics.py \
+            2>&1 | tee probe-test-output.txt
       - name: Upload read-only probe test diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

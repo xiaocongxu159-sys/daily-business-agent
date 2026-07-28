@@ -15,11 +15,10 @@ from pydantic import BaseModel, Field, SecretStr
 from agent.app import create_app
 from agent.lingxing_connection_package import ConnectionPackageError
 from agent.lingxing_package_import import PendingConnectionPackageStore
-from agent.lingxing_probe import (
-    LingxingProbeProvider,
-    LingxingProbeResultStore,
-    LingxingReadOnlyProbeService,
-    TlsSdkLingxingProbeProvider,
+from agent.lingxing_probe import LingxingProbeProvider, LingxingReadOnlyProbeService
+from agent.lingxing_probe_diagnostics import (
+    DiagnosticLingxingProbeResultStore,
+    DiagnosticTlsSdkLingxingProbeProvider,
 )
 from agent.lingxing_secure_store import LingxingCredentials, LingxingLocalStore, SecretProtector
 from agent.lingxing_service import LingxingProvider
@@ -57,7 +56,9 @@ def attach_lingxing(
     app: FastAPI,
     *,
     provider_factory: Callable[[], LingxingProvider] = TlsSdkLingxingProvider,
-    probe_provider_factory: Callable[[], LingxingProbeProvider] = TlsSdkLingxingProbeProvider,
+    probe_provider_factory: Callable[[], LingxingProbeProvider] = (
+        DiagnosticTlsSdkLingxingProbeProvider
+    ),
     protector: SecretProtector | None = None,
     start_service: bool = True,
 ) -> FastAPI:
@@ -65,7 +66,7 @@ def attach_lingxing(
     local_ui_path = Path(__file__).resolve().parent / "static" / "lingxing.html"
     store = LingxingLocalStore(settings.data_root, protector=protector)
     service = TlsLingxingSyncService(store, provider_factory=provider_factory)
-    probe_store = LingxingProbeResultStore(settings.data_root)
+    probe_store = DiagnosticLingxingProbeResultStore(settings.data_root)
     probe_service = LingxingReadOnlyProbeService(
         store,
         probe_store,
@@ -239,7 +240,9 @@ def create_integrated_app(
     token: str | None = None,
     *,
     provider_factory: Callable[[], LingxingProvider] = TlsSdkLingxingProvider,
-    probe_provider_factory: Callable[[], LingxingProbeProvider] = TlsSdkLingxingProbeProvider,
+    probe_provider_factory: Callable[[], LingxingProbeProvider] = (
+        DiagnosticTlsSdkLingxingProbeProvider
+    ),
     protector: SecretProtector | None = None,
     start_service: bool = True,
 ) -> FastAPI:

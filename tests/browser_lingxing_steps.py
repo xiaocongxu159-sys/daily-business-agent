@@ -91,6 +91,20 @@ class BrowserFakeProbeProvider:
                     "date_to": "2026-07-27",
                     "error_code": "",
                 },
+                {
+                    "dataset": "fba_inventory_shared_detail",
+                    "status": "failed",
+                    "fields": [],
+                    "sampled_rows": 0,
+                    "response_count": 0,
+                    "total_count": None,
+                    "date_from": None,
+                    "date_to": None,
+                    "error_code": "invalid_response",
+                    "diagnostic_code": "sdk_response_validation",
+                    "remote_error_code": None,
+                    "raw_error": "ASIN-BROWSER-MUST-NOT-APPEAR",
+                },
             ],
             "raw_order": "ORDER-BROWSER-MUST-NOT-APPEAR",
             "raw_amount": "98765.43",
@@ -145,6 +159,7 @@ def run_page_check() -> None:
                 expect(page.locator("#probe-card")).to_be_visible()
                 expect(page.locator("#probe-now")).to_be_enabled(timeout=10_000)
                 expect(page.locator("#probe-card")).to_contain_text("不会显示或保存")
+                expect(page.locator("#probe-card")).to_contain_text("安全诊断")
                 if page.locator('input[type="file"]').count():
                     raise AssertionError("single-file native flow must not expose browser file input")
                 if page.locator("#proxy-url").count():
@@ -159,12 +174,17 @@ def run_page_check() -> None:
                 expect(order_row).to_contain_text("2026-07-27")
                 traffic_row = page.locator('[data-probe-dataset="sales_traffic"]')
                 expect(traffic_row).to_contain_text("任务已接受")
+                diagnostic_row = page.locator(
+                    '[data-probe-dataset="fba_inventory_shared_detail"]'
+                )
+                expect(diagnostic_row).to_contain_text("sdk_response_validation")
 
                 probe_text = page.locator("#probe-results").inner_text()
                 for forbidden in (
                     "synthetic-browser-secret",
                     "browser-pass",
                     "ORDER-BROWSER-MUST-NOT-APPEAR",
+                    "ASIN-BROWSER-MUST-NOT-APPEAR",
                     "98765.43",
                     "MARKETPLACE-BROWSER-1",
                 ):
