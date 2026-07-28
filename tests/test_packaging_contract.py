@@ -75,7 +75,7 @@ def test_installer_live_upgrade_is_fail_safe_before_runtime_delete() -> None:
     installer = read("packaging/installer.iss")
     required = (
         "AllowCancelDuringInstall=no",
-        "CloseApplications=force",
+        "CloseApplications=yes",
         "CloseApplicationsFilter=*.*",
         "function PrepareToInstall",
         "taskkill /IM {#MyAppExeName} /T /F",
