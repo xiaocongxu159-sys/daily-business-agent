@@ -67,6 +67,8 @@ jobs:
         run: python -m pip_audit --strict --progress-spinner off -r requirements-build.txt
       - name: Build unified installer
         run: .\packaging\build_installer.ps1
+      - name: Verify frozen read-only probe runtime
+        run: .\scripts\verify_probe_runtime.ps1
       - name: Verify install, live upgrade, failure rollback, analysis and data retention
         timeout-minutes: 18
         run: |
