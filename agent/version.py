@@ -15,7 +15,7 @@ def get_version() -> str:
             continue
         if value:
             return value
-    return "0.6.0"
+    return "0.6.1"
 
 
 VERSION = get_version()
