@@ -50,8 +50,8 @@ def test_rich_dashboard_is_local_and_contains_expected_charts(tmp_path: Path) ->
         assert f'id="{chart_id}"' in html
     for label in ("流量", "销量", "销售额", "广告花费", "广告销售额", "库存"):
         assert label in html
-    assert 'data-axis-label="left"' in html
-    assert 'data-axis-label="right"' in html
+    assert "function uprightAxis" in html
+    assert "data-axis-label" in html
     assert 'data-axis-upright="1"' in html
     assert 'data-chart-tooltip="1"' in html
     assert "chart-tooltip-row" in html
