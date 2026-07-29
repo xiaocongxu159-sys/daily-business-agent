@@ -65,6 +65,7 @@ def run_dashboard_job_isolated(
     command = _child_command(job_store.data_root, job_id, manifest_path, context_path)
     environment = os.environ.copy()
     environment["PYTHONUTF8"] = "1"
+    environment.pop("DAILY_BUSINESS_AGENT_CRASH_LOG", None)
     try:
         with log_path.open("w", encoding="utf-8", newline="\n") as log_handle:
             completed = subprocess.run(
