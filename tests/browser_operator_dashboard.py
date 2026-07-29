@@ -107,7 +107,7 @@ def main() -> None:
             )
             page.on("pageerror", lambda error: browser_errors.append(str(error)))
             page.goto(html_path.as_uri(), wait_until="load")
-            page.wait_for_selector("#store option")
+            page.wait_for_selector("#store option", state="attached")
 
             store_options = page.locator("#store option").all()
             labels = [item.inner_text() for item in store_options]
