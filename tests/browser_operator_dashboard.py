@@ -131,6 +131,7 @@ def main() -> None:
             assert first_card.locator("span").inner_text() == "商品数"
             assert first_card.locator("strong").inner_text() == "2"
 
+            page.locator("#filterDetails > summary").click()
             page.select_option("#store", "12940")
             summary = page.locator("#filterSummary").inner_text()
             assert "承拓嘉-US" in summary
