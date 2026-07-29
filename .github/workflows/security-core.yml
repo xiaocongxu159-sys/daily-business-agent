@@ -51,6 +51,7 @@ jobs:
           tests/test_lingxing_sync_foundation.py
           tests/test_lingxing_available_sync.py
           tests/test_lingxing_dashboard_bridge.py
+          tests/test_lingxing_dashboard_scale.py
       - name: Test privacy-safe Lingxing read-only probe
         run: |
           set -o pipefail
