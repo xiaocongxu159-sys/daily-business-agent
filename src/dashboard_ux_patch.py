@@ -57,7 +57,7 @@ def _safe_json(value) -> str:
     )
 
 
-def _clean_payload_and_notice(text: str) -> tuple[str, str]:
+def _clean_payload_and_notice(text: str) -> tuple[str, str, bool]:
     match = DATA_SCRIPT.search(text)
     if match is None:
         raise ValueError("dashboard data payload is missing")
@@ -66,8 +66,12 @@ def _clean_payload_and_notice(text: str) -> tuple[str, str]:
     except json.JSONDecodeError as exc:
         raise ValueError("dashboard data payload is invalid") from exc
 
+    source_mode = str((payload.get("meta") or {}).get("source_mode") or "").strip()
+    if source_mode != "lingxing_local_sync":
+        return text, "", False
+
     # Technical quality rows stay in the local workbook/task JSON, not in the
-    # operator-facing HTML document.
+    # operator-facing Lingxing HTML document.
     payload["quality"] = []
     supplemental = payload.get("supplemental_daily") or []
     source_rows = 0
@@ -94,7 +98,7 @@ def _clean_payload_and_notice(text: str) -> tuple[str, str]:
         )
 
     replacement = match.group(1) + _safe_json(payload) + match.group(3)
-    return text[: match.start()] + replacement + text[match.end() :], notice
+    return text[: match.start()] + replacement + text[match.end() :], notice, True
 
 
 def _remove_detail_rendering(text: str) -> str:
@@ -115,20 +119,21 @@ def patch_dashboard_html_file(path):
     if "每日经营看板" not in text:
         raise ValueError("dashboard title is missing")
 
-    text, notice = _clean_payload_and_notice(text)
-    text, count = DETAIL_SECTIONS.subn("\n" + notice, text, count=1)
-    if count != 1:
-        raise ValueError("dashboard operator detail sections are missing")
-    if STORE_SETUP_OLD not in text:
-        raise ValueError("dashboard store filter marker is missing")
-    text = text.replace(STORE_SETUP_OLD, STORE_SETUP_NEW, 1)
-    if SUMMARY_OLD not in text:
-        raise ValueError("dashboard filter summary marker is missing")
-    text = text.replace(SUMMARY_OLD, SUMMARY_NEW, 1)
-    if METRIC_OLD not in text:
-        raise ValueError("dashboard record metric marker is missing")
-    text = text.replace(METRIC_OLD, METRIC_NEW, 1)
-    text = _remove_detail_rendering(text)
+    text, notice, operator_view = _clean_payload_and_notice(text)
+    if operator_view:
+        text, count = DETAIL_SECTIONS.subn("\n" + notice, text, count=1)
+        if count != 1:
+            raise ValueError("dashboard operator detail sections are missing")
+        if STORE_SETUP_OLD not in text:
+            raise ValueError("dashboard store filter marker is missing")
+        text = text.replace(STORE_SETUP_OLD, STORE_SETUP_NEW, 1)
+        if SUMMARY_OLD not in text:
+            raise ValueError("dashboard filter summary marker is missing")
+        text = text.replace(SUMMARY_OLD, SUMMARY_NEW, 1)
+        if METRIC_OLD not in text:
+            raise ValueError("dashboard record metric marker is missing")
+        text = text.replace(METRIC_OLD, METRIC_NEW, 1)
+        text = _remove_detail_rendering(text)
 
     if "data-local-dashboard-checked" not in text:
         text = text.replace("<html ", '<html data-local-dashboard-checked="true" ', 1)
