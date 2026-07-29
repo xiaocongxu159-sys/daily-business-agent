@@ -62,7 +62,8 @@ def verify_sdk_runtime() -> None:
 
 
 def verify_probe_runtime() -> None:
-    """Exercise only synthetic probe and business metadata inside the frozen EXE."""
+    """Exercise synthetic probe, sync stores and isolated dashboard worker."""
+    from agent.frozen_dashboard_verification import verify_frozen_dashboard_worker
     from agent.lingxing_available_sync import (
         AVAILABLE_DATASETS,
         UNAVAILABLE_DATASETS,
@@ -139,6 +140,8 @@ def verify_probe_runtime() -> None:
             or AvailableLingxingSyncService is None
         ):
             raise RuntimeError("frozen Lingxing available sync contract failed")
+
+        verify_frozen_dashboard_worker(root / "dashboard-worker")
 
 
 def _already_running(url: str) -> bool:
