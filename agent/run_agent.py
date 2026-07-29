@@ -38,6 +38,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Verify frozen privacy-safe probe and local sync stores without reading user data.",
     )
+    parser.add_argument(
+        "--run-lingxing-dashboard-job",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--job-id", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--manifest", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--dashboard-context", type=Path, help=argparse.SUPPRESS)
     return parser
 
 
@@ -190,6 +198,20 @@ def _open_when_ready(
     webbrowser.open(f"{landing_url}?startup_error=1")
 
 
+def _run_dashboard_child(args: argparse.Namespace) -> None:
+    if not args.job_id or args.manifest is None or args.dashboard_context is None:
+        raise RuntimeError("dashboard child arguments are incomplete")
+    from agent.lingxing_dashboard_worker import run_dashboard_child
+
+    exit_code = run_dashboard_child(
+        args.data_root.resolve(),
+        args.job_id,
+        args.manifest.resolve(),
+        args.dashboard_context.resolve(),
+    )
+    raise SystemExit(exit_code)
+
+
 def main() -> None:
     args = build_parser().parse_args()
     if args.verify_sdk_runtime:
@@ -198,6 +220,8 @@ def main() -> None:
     if args.verify_probe_runtime:
         verify_probe_runtime()
         return
+    if args.run_lingxing_dashboard_job:
+        _run_dashboard_child(args)
 
     origins = tuple(args.allow_origin) or (
         f"http://127.0.0.1:{args.port}",
