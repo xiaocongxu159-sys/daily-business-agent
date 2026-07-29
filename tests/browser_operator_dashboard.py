@@ -110,14 +110,15 @@ def main() -> None:
             page.wait_for_selector("#store option", state="attached")
 
             store_options = page.locator("#store option").all()
-            labels = [item.inner_text() for item in store_options]
-            values = [item.get_attribute("value") for item in store_options]
-            assert labels == ["全部店铺", "承拓嘉-US", "第二店铺-CA"] or labels == [
-                "全部店铺",
-                "第二店铺-CA",
-                "承拓嘉-US",
-            ]
-            assert set(values) == {"", "12940", "12941"}
+            label_by_value = {
+                str(item.get_attribute("value") or ""): str(item.text_content() or "").strip()
+                for item in store_options
+            }
+            assert label_by_value == {
+                "": "全部店铺",
+                "12940": "承拓嘉-US",
+                "12941": "第二店铺-CA",
+            }, label_by_value
             assert page.get_by_role("heading", name="每日商品数据").count() == 0
             assert page.get_by_role("heading", name="数据质量").count() == 0
             assert page.get_by_text("PRIVATE_TECHNICAL_MARKER").count() == 0
