@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import os
 import time
 from pathlib import Path
 
@@ -159,7 +160,8 @@ def test_realistic_snapshot_dashboard_finishes_within_three_minutes(tmp_path: Pa
     job, manifest, context = prepare_lingxing_dashboard_job(jobs, data_root)
 
     started = time.monotonic()
-    process = multiprocessing.get_context("fork").Process(
+    method = "spawn" if os.name == "nt" else "fork"
+    process = multiprocessing.get_context(method).Process(
         target=_run_job,
         args=(str(data_root), job["job_id"], str(manifest), context),
         daemon=True,
