@@ -106,6 +106,16 @@ def run_dashboard_job_isolated(
 
     current = job_store.load_job(job_id)
     if completed.returncode == 0 and current.get("status") == "success":
+        set_dashboard_stage(
+            job_store,
+            job_id,
+            "completed",
+            status="success",
+            error=None,
+        )
+        return
+    if current.get("status") == "failed":
+        set_dashboard_stage(job_store, job_id, "failed", status="failed")
         return
     if current.get("status") in ACTIVE_STATUSES:
         set_dashboard_stage(
