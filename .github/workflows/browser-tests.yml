@@ -7,7 +7,9 @@ on:
       - "src/**"
       - "tests/browser_public_pages.py"
       - "tests/browser_rich_dashboard.py"
+      - "tests/browser_operator_dashboard.py"
       - "tests/browser_lingxing_steps.py"
+      - "tests/browser_lingxing_operator_steps.py"
       - "requirements*.txt"
       - "VERSION"
       - ".github/workflows/browser-tests.yml"
@@ -18,7 +20,9 @@ on:
       - "src/**"
       - "tests/browser_public_pages.py"
       - "tests/browser_rich_dashboard.py"
+      - "tests/browser_operator_dashboard.py"
       - "tests/browser_lingxing_steps.py"
+      - "tests/browser_lingxing_operator_steps.py"
       - "requirements*.txt"
       - "VERSION"
       - ".github/workflows/browser-tests.yml"
@@ -79,5 +83,7 @@ jobs:
           path: ${{ runner.temp }}/rich-dashboard
           if-no-files-found: error
           retention-days: 7
-      - name: Check single-file Lingxing page in Chromium
-        run: python tests/browser_lingxing_steps.py --check page
+      - name: Check cleaned operator dashboard in Chromium
+        run: python tests/browser_operator_dashboard.py
+      - name: Check single-file Lingxing page and operator dashboard in Chromium
+        run: python tests/browser_lingxing_operator_steps.py

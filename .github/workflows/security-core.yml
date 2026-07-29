@@ -53,6 +53,7 @@ jobs:
           tests/test_lingxing_dashboard_bridge.py
           tests/test_lingxing_dashboard_scale.py
           tests/test_lingxing_dashboard_recovery.py
+          tests/test_dashboard_operator_cleanup.py
       - name: Test privacy-safe Lingxing read-only probe
         run: |
           set -o pipefail
