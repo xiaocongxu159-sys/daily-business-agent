@@ -21,7 +21,9 @@ def _seed_realistic_snapshots(data_root: Path) -> None:
     for index in range(17):
         sid = 501 + index
         shops.append({
+            "mid": 1 + index,
             "sid": sid,
+            "seller_id": f"SELLER-{index + 1}",
             "seller_name": f"Synthetic Store {index + 1}",
             "marketplace_id": f"MARKET-{index + 1}",
             "region": "NA",
@@ -35,10 +37,13 @@ def _seed_realistic_snapshots(data_root: Path) -> None:
             "asin": f"B0{index:08d}",
             "parent_asin": f"P0{index // 4:08d}",
             "msku": f"MSKU-{index:05d}",
+            "lsku": f"LSKU-{index:05d}",
+            "fnsku": f"FNSKU-{index:05d}",
             "product_name": f"Synthetic Product {index}",
             "fulfillment_channel": "FBA",
             "status": "Active",
             "deleted": False,
+            "update_time_utc": "2026-07-29T00:00:00+00:00",
             "your_price": 19.99,
         })
     orders = []
@@ -51,6 +56,7 @@ def _seed_realistic_snapshots(data_root: Path) -> None:
             "order_status": "Shipped",
             "asin": item["asin"],
             "msku": item["msku"],
+            "lsku": item["lsku"],
             "order_qty": 1,
             "sales_amt": 19.99,
             "currency_code": "USD",
@@ -119,6 +125,8 @@ def _seed_realistic_snapshots(data_root: Path) -> None:
             "sid": item["sid"],
             "asin": item["asin"],
             "msku": item["msku"],
+            "lsku": item["lsku"],
+            "fnsku": item["fnsku"],
             "afn_fulfillable_qty": 10 + index % 20,
             "afn_unsellable_qty": 1,
             "afn_reserved_fc_processing_qty": 2,
