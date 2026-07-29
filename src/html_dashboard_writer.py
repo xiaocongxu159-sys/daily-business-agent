@@ -73,16 +73,118 @@ def _metric_status(availability: dict, key: str) -> str:
     return str(value or "")
 
 
+def _dashboard_day(row: dict) -> str:
+    value = row.get("日期") or row.get("report_date") or row.get("识别日期") or ""
+    parsed = pd.to_datetime(value, errors="coerce")
+    return "" if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
+
+
+def _inject_lingxing_inventory_rows(
+    daily_records: list[dict],
+    inventory_frame: pd.DataFrame,
+) -> list[dict]:
+    """Keep the immutable inventory snapshot on its real date.
+
+    The normal local engine only builds its date grid from business/ad rows. A
+    Lingxing inventory snapshot can be one day newer, so this adapter merges or
+    appends inventory rows by the canonical daily offer key without changing any
+    non-Lingxing dashboard.
+    """
+    inventory_records = _records(inventory_frame)
+    if not inventory_records:
+        return daily_records
+
+    output = [dict(row) for row in daily_records]
+    by_key = {
+        str(row.get("daily_offer_key")): row
+        for row in output
+        if row.get("daily_offer_key")
+    }
+    inventory_metrics = (
+        "FBA可售库存",
+        "FBA在途库存",
+        "FBA预留库存",
+        "FBA不可售库存",
+        "FBM库存",
+        "总库存",
+    )
+    identity_fields = (
+        "shop_id",
+        "shop_name",
+        "marketplace",
+        "parent_asin",
+        "asin",
+        "ASIN",
+        "seller_sku",
+        "msku",
+        "MSKU",
+        "SKU",
+        "产品名称",
+        "store_key",
+        "product_key",
+        "offer_key",
+        "daily_offer_key",
+        "daily_asin_key",
+        "key_source",
+        "offer_identity",
+        "identity_status",
+        "inventory_match_status",
+        "inventory_source_present",
+    )
+
+    for inventory in inventory_records:
+        day = _dashboard_day(inventory)
+        key = str(inventory.get("daily_offer_key") or "")
+        if not day or not key:
+            continue
+        target = by_key.get(key)
+        if target is None:
+            target = {
+                "日期": day,
+                "report_date": day,
+                "Sessions": None,
+                "PV": None,
+                "Page Views": None,
+                "总订单": 0.0,
+                "Units Ordered": 0.0,
+                "订单量": 0.0,
+                "销售额": 0.0,
+                "Ordered Product Sales": 0.0,
+                "广告曝光": 0.0,
+                "广告点击": 0.0,
+                "广告花费": 0.0,
+                "广告订单": 0.0,
+                "广告销售额": 0.0,
+            }
+            for field in identity_fields:
+                if field in inventory:
+                    target[field] = inventory.get(field)
+            output.append(target)
+            by_key[key] = target
+        for field in identity_fields:
+            if (target.get(field) is None or target.get(field) == "") and field in inventory:
+                target[field] = inventory.get(field)
+        for field in inventory_metrics:
+            target[field] = inventory.get(field, 0.0)
+        target["日期"] = day
+        target["report_date"] = day
+        target["inventory_source_present"] = True
+    return output
+
+
 def _payload(excel_path: Path, dashboard_context: dict | None = None) -> dict:
     sheets = pd.read_excel(excel_path, sheet_name=None)
     daily = sheets.get("每日数据录入", pd.DataFrame())
     quality = sheets.get("数据质量报告", pd.DataFrame())
-    dates = pd.to_datetime(
-        daily.get("日期", pd.Series(dtype=object)), errors="coerce"
-    ).dropna()
     context = dict(dashboard_context or {})
     availability = dict(context.get("metric_availability") or {})
     daily_records = _records(daily)
+    meta_context = dict(context.get("meta") or {})
+    if meta_context.get("source_mode") == "lingxing_local_sync":
+        daily_records = _inject_lingxing_inventory_rows(
+            daily_records,
+            sheets.get("库存汇总", pd.DataFrame()),
+        )
     if _metric_status(availability, "sessions") == "unavailable":
         for row in daily_records:
             row["Sessions"] = None
@@ -91,13 +193,15 @@ def _payload(excel_path: Path, dashboard_context: dict | None = None) -> dict:
             row["PV"] = None
             row["Page Views"] = None
 
+    days = [_dashboard_day(row) for row in daily_records]
+    days = sorted(day for day in days if day)
     meta = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "generated_from": excel_path.name,
-        "min_date": dates.min().strftime("%Y-%m-%d") if not dates.empty else "",
-        "max_date": dates.max().strftime("%Y-%m-%d") if not dates.empty else "",
+        "min_date": days[0] if days else "",
+        "max_date": days[-1] if days else "",
     }
-    meta.update(dict(context.get("meta") or {}))
+    meta.update(meta_context)
     quality_records = _records(quality)
     for item in context.get("quality_notes") or []:
         if isinstance(item, dict):
