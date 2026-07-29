@@ -9,6 +9,7 @@ on:
       - "tests/browser_rich_dashboard.py"
       - "tests/browser_operator_dashboard.py"
       - "tests/browser_lingxing_steps.py"
+      - "tests/browser_lingxing_operator_steps.py"
       - "requirements*.txt"
       - "VERSION"
       - ".github/workflows/browser-tests.yml"
@@ -21,6 +22,7 @@ on:
       - "tests/browser_rich_dashboard.py"
       - "tests/browser_operator_dashboard.py"
       - "tests/browser_lingxing_steps.py"
+      - "tests/browser_lingxing_operator_steps.py"
       - "requirements*.txt"
       - "VERSION"
       - ".github/workflows/browser-tests.yml"
@@ -83,5 +85,5 @@ jobs:
           retention-days: 7
       - name: Check cleaned operator dashboard in Chromium
         run: python tests/browser_operator_dashboard.py
-      - name: Check single-file Lingxing page in Chromium
-        run: python tests/browser_lingxing_steps.py --check page
+      - name: Check single-file Lingxing page and operator dashboard in Chromium
+        run: python tests/browser_lingxing_operator_steps.py
