@@ -44,7 +44,7 @@ def _child_command(
     ]
     if getattr(sys, "frozen", False):
         return [sys.executable, *arguments]
-    return [sys.executable, "-m", "agent.windows_launcher", *arguments]
+    return [sys.executable, "-m", "agent.run_agent", *arguments]
 
 
 def run_dashboard_job_isolated(
