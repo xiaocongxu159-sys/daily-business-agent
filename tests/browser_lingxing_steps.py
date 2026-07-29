@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Real-Chromium acceptance for the unified Lingxing page and safe probe."""
+"""Real-Chromium acceptance for Lingxing sync, probe, and local dashboard."""
 from __future__ import annotations
 
 import argparse
@@ -30,6 +30,10 @@ from browser_public_pages import (
     TOKEN,
     _wait_for_server,
     _watch_network,
+)
+from lingxing_dashboard_fixture import (
+    BROWSER_FORBIDDEN_BUYER,
+    seed_browser_dashboard_snapshots,
 )
 
 
@@ -111,6 +115,42 @@ class BrowserFakeProbeProvider:
         }
 
 
+def _check_dashboard(page) -> None:
+    expect(page).to_have_title("每日经营看板")
+    expect(page.locator("#source")).to_contain_text("本机领星同步快照")
+    expect(page.locator("#availabilityNotice")).to_be_visible()
+    expect(page.locator("#availabilityNotice")).to_contain_text("暂不可用")
+    expect(page.locator("#cards")).to_contain_text("59.97")
+    expect(page.locator("#cards")).to_contain_text("7.75")
+    expect(page.locator("#cards")).to_contain_text("含店铺级未分配广告")
+    expect(page.locator("#trafficChart")).to_contain_text("不会将缺失数据绘制为 0")
+    expect(page.locator("#salesChart svg")).to_be_visible()
+    expect(page.locator("#adsChart svg")).to_be_visible()
+    expect(page.locator("#inventoryChart svg")).to_be_visible()
+    expect(page.locator('[data-axis-upright="1"]')).to_have_count(5)
+    expect(page.locator('[data-chart-tooltip="1"]')).to_have_count(3)
+    expect(page.locator("#body")).to_contain_text("2026-07-29")
+    expect(page.locator("#body")).to_contain_text("12")
+    expect(page.locator("#quality")).to_contain_text("Sessions/PV 暂不可用")
+    expect(page.locator("#quality")).to_contain_text("店铺级广告总额和趋势")
+
+    body = page.locator("body").inner_text()
+    for forbidden in (
+        BROWSER_FORBIDDEN_BUYER,
+        "synthetic-browser-secret",
+        "browser-pass",
+        "SELLER-BROWSER-PRIVATE",
+    ):
+        if forbidden in body:
+            raise AssertionError(f"local dashboard leaked forbidden value: {forbidden}")
+
+    page.locator("#adsChart").hover(position={"x": 220, "y": 150})
+    expect(page.locator("#adsChart [data-chart-tooltip]")).to_be_visible()
+    page.mouse.wheel(0, 500)
+    if page.evaluate("window.scrollY") <= 0:
+        raise AssertionError("mouse wheel did not scroll the generated dashboard")
+
+
 def run_page_check() -> None:
     with tempfile.TemporaryDirectory(prefix="daily-agent-lingxing-page-") as temp:
         root = Path(temp)
@@ -128,6 +168,7 @@ def run_page_check() -> None:
             )
         )
         store.save_shops(BrowserProbeShopProvider().list_shops(store.load_credentials()))
+        seed_browser_dashboard_snapshots(data_root)
 
         app = create_integrated_app(
             AgentSettings(data_root=data_root, host=HOST, port=PORT),
@@ -160,11 +201,25 @@ def run_page_check() -> None:
                 expect(page.locator("#probe-now")).to_be_enabled(timeout=10_000)
                 expect(page.locator("#probe-card")).to_contain_text("不会显示或保存")
                 expect(page.locator("#probe-card")).to_contain_text("安全诊断")
+                expect(page.locator("#dashboard-card")).to_be_visible()
+                expect(page.locator("#dashboard-card")).to_contain_text("不会重新访问领星")
+                expect(page.locator("#dashboard-now")).to_be_enabled(timeout=15_000)
                 if page.locator('input[type="file"]').count():
                     raise AssertionError("single-file native flow must not expose browser file input")
                 if page.locator("#proxy-url").count():
                     raise AssertionError("technical proxy field must remain hidden")
 
+                page.locator("#dashboard-now").click()
+                expect(page.locator("#dashboard-pill")).to_have_text("已生成", timeout=45_000)
+                expect(page.locator("#dashboard-open")).to_be_visible()
+                dashboard_href = page.locator("#dashboard-open").get_attribute("href")
+                if not dashboard_href:
+                    raise AssertionError("generated dashboard link is missing")
+                page.goto(f"{BASE_URL}{dashboard_href}", wait_until="domcontentloaded")
+                _check_dashboard(page)
+
+                page.goto(f"{BASE_URL}/lingxing", wait_until="domcontentloaded")
+                expect(page.locator("#probe-now")).to_be_enabled(timeout=10_000)
                 page.locator("#probe-now").click()
                 expect(page.locator("#probe-pill")).to_have_text("已完成", timeout=15_000)
                 order_row = page.locator('[data-probe-dataset="orders"]')
@@ -208,7 +263,7 @@ def main() -> int:
     parser.add_argument("--check", choices=("page",), required=True)
     parser.parse_args()
     run_page_check()
-    print("Lingxing browser acceptance passed: local-only page and privacy-safe probe")
+    print("Lingxing browser acceptance passed: local-only sync, probe, and dashboard")
     return 0
 
 

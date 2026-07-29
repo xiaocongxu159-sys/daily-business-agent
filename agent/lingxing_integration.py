@@ -14,6 +14,14 @@ from pydantic import BaseModel, Field, SecretStr
 
 from agent.app import create_app
 from agent.lingxing_connection_package import ConnectionPackageError
+from agent.lingxing_dashboard_bridge import (
+    LingxingDashboardError,
+    active_lingxing_dashboard_job,
+    execute_lingxing_dashboard_job,
+    latest_lingxing_dashboard_job,
+    prepare_lingxing_dashboard_job,
+    public_lingxing_dashboard_job,
+)
 from agent.lingxing_package_import import PendingConnectionPackageStore
 from agent.lingxing_probe import LingxingProbeProvider, LingxingReadOnlyProbeService
 from agent.lingxing_probe_diagnostics import (
@@ -74,6 +82,8 @@ def attach_lingxing(
         provider_factory=probe_provider_factory,
     )
     pending_packages = PendingConnectionPackageStore()
+    job_store = app.state.store
+    executor = app.state.executor
     app.state.lingxing_store = store
     app.state.lingxing_service = service
     app.state.lingxing_probe_store = probe_store
@@ -225,6 +235,67 @@ def attach_lingxing(
             "started": started,
             "message": "已开始后台更新。" if started else "后台更新已经在运行。",
             "state": service.public_status(),
+        }
+
+    @app.get("/v1/lingxing/dashboard", dependencies=[Depends(require_local_auth)])
+    def lingxing_dashboard_status() -> dict:
+        return {"job": latest_lingxing_dashboard_job(job_store)}
+
+    @app.post(
+        "/v1/lingxing/dashboard",
+        status_code=202,
+        dependencies=[Depends(require_local_auth)],
+    )
+    def create_lingxing_dashboard() -> dict:
+        current_state = service.public_status()
+        if current_state.get("running"):
+            raise HTTPException(
+                status_code=409,
+                detail="经营数据正在同步，请等待同步结束后再生成看板。",
+            )
+        active = active_lingxing_dashboard_job(job_store)
+        if active is not None:
+            return {
+                "started": False,
+                "message": "本机经营看板已经在生成。",
+                "job": active,
+            }
+        try:
+            job, manifest, dashboard_context = prepare_lingxing_dashboard_job(
+                job_store,
+                settings.data_root,
+            )
+        except LingxingDashboardError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        queued = job_store.update_status(
+            job["job_id"],
+            "queued",
+            result=None,
+            error=None,
+        )
+        try:
+            executor.submit(
+                execute_lingxing_dashboard_job,
+                job_store,
+                job["job_id"],
+                manifest,
+                dashboard_context,
+            )
+        except RuntimeError as exc:
+            job_store.update_status(
+                job["job_id"],
+                "failed",
+                result=None,
+                error="ExecutorUnavailable: 本机任务执行器不可用。",
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="本机任务执行器暂不可用。",
+            ) from exc
+        return {
+            "started": True,
+            "message": "已开始从本机同步快照生成经营看板。",
+            "job": public_lingxing_dashboard_job(queued),
         }
 
     @app.delete("/v1/lingxing/config", dependencies=[Depends(require_local_auth)])
